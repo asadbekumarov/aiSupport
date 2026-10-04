@@ -1,0 +1,19 @@
+node_modules/
+.env
+
+# Database files
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# Channel export files (may contain personal data)
+data/exports/*
+!data/exports/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
