@@ -211,6 +211,44 @@ export async function generatePost({
     'gemini-3.5-flash-lite',
   ].filter((m, i, arr) => arr.indexOf(m) === i && Boolean(m) && m !== 'gemini-flash-latest');
 
+  // ── Groq Provider (Primary when GROQ_API_KEY is configured) ─────────────
+  if (config.GROQ_API_KEY) {
+    try {
+      const groqModel = config.GROQ_MODEL || 'qwen/qwen3.8-27b';
+      console.log(`[aiService] Generating post with Groq (${groqModel})…`);
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${config.GROQ_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: groqModel,
+          messages: [
+            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.8,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content ?? '';
+        if (text) {
+          const result = parseResponse(text);
+          console.log(`[aiService] Successfully generated via Groq: "${result.topic}"`);
+          return result;
+        }
+      } else {
+        const errBody = await res.text();
+        console.warn(`[aiService] Groq HTTP ${res.status}: ${errBody.slice(0, 150)}`);
+      }
+    } catch (err) {
+      console.warn('[aiService] Groq error, falling back to Gemini:', err.message);
+    }
+  }
+
   async function callModel(contents) {
     let lastError = null;
     for (const m of candidateModels) {
@@ -250,7 +288,7 @@ export async function generatePost({
     throw lastError ?? new Error('[aiService] Barcha Gemini modellari javob bera olmadi');
   }
 
-  console.log(`[aiService] Generating post with model "${model}"…`);
+  console.log(`[aiService] Generating post with Gemini model "${model}"…`);
 
   const response = await callModel([{ role: 'user', parts: [{ text: userPrompt }] }]);
 

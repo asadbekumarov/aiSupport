@@ -11,8 +11,11 @@ assertConfig([
   'BOT_TOKEN',
   'MY_CHAT_ID',
   'CHANNEL_USERNAME',
-  'GEMINI_API_KEY',
 ]);
+
+if (!process.env.GROQ_API_KEY && !process.env.GEMINI_API_KEY) {
+  throw new Error('[config] Either GROQ_API_KEY or GEMINI_API_KEY must be provided in .env');
+}
 
 // ── 2. Import modules (after env is validated) ─────────────────────────────
 import { getClient, disconnectClient } from './src/userbot.js';

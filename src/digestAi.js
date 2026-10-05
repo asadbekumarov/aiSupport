@@ -23,9 +23,39 @@ const candidateModels = [
 );
 
 /**
- * Call Gemini model with candidate fallbacks and retry on high demand.
+ * Call AI model with candidate fallbacks and retry on high demand.
  */
 async function callGemini(systemPrompt, userPrompt) {
+  if (config.GROQ_API_KEY) {
+    try {
+      const groqModel = config.GROQ_MODEL || 'qwen/qwen3.8-27b';
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${config.GROQ_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: groqModel,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature: 0.2,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const text = data.choices?.[0]?.message?.content ?? '';
+        if (text) return text;
+      }
+    } catch (err) {
+      console.warn('[digestAi] Groq error, falling back to Gemini:', err.message);
+    }
+  }
+
   let lastError = null;
   for (const model of candidateModels) {
     for (let attempt = 0; attempt < 2; attempt++) {

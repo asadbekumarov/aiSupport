@@ -31,9 +31,11 @@ export const config = {
   MY_CHAT_ID: Number(process.env.MY_CHAT_ID),
   CHANNEL_USERNAME: process.env.CHANNEL_USERNAME ?? '',
 
-  // Gemini
+  // Gemini & Groq AI
   GEMINI_API_KEY: process.env.GEMINI_API_KEY ?? '',
   GEMINI_MODEL: process.env.GEMINI_MODEL ?? 'gemini-flash-latest',
+  GROQ_API_KEY: process.env.GROQ_API_KEY ?? '',
+  GROQ_MODEL: process.env.GROQ_MODEL ?? 'qwen/qwen3.8-27b',
 
   // Source chats – whitelist only (never read others)
   SOURCE_CHATS: (process.env.SOURCE_CHATS ?? '')
