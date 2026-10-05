@@ -87,28 +87,28 @@ export async function sendDraft(draftId) {
     return;
   }
 
+  const keyboard = draftKeyboard(draftId);
+
   try {
     const msg = await bot.api.sendMessage(config.MY_CHAT_ID, draft.text, {
       parse_mode: 'HTML',
-      reply_markup: draftKeyboard(draftId),
+      reply_markup: keyboard,
       link_preview_options: { is_disabled: true },
     });
     setDraftMessageId({ id: draftId, message_id: msg.message_id });
     console.log(`[bot] Draft #${draftId} sent to owner (msg_id=${msg.message_id}).`);
   } catch (err) {
     console.error(`[bot] Failed to send draft #${draftId}:`, err.message ?? err);
-    // Try plain text fallback if Telegram rejects HTML
-    if (err.message?.includes("can't parse entities")) {
-      try {
-        const plain = stripTags(draft.text);
-        const msg = await bot.api.sendMessage(config.MY_CHAT_ID, plain, {
-          reply_markup: draftKeyboard(draftId),
-        });
-        setDraftMessageId({ id: draftId, message_id: msg.message_id });
-        console.log(`[bot] Draft #${draftId} sent as plain text fallback.`);
-      } catch (fallbackErr) {
-        console.error(`[bot] Plain-text fallback also failed:`, fallbackErr.message ?? fallbackErr);
-      }
+    // Plain text fallback if Telegram rejects HTML
+    try {
+      const plain = stripTags(draft.text);
+      const msg = await bot.api.sendMessage(config.MY_CHAT_ID, plain, {
+        reply_markup: keyboard,
+      });
+      setDraftMessageId({ id: draftId, message_id: msg.message_id });
+      console.log(`[bot] Draft #${draftId} sent as plain text fallback.`);
+    } catch (fallbackErr) {
+      console.error(`[bot] Plain-text fallback also failed:`, fallbackErr.message ?? fallbackErr);
     }
   }
 }
@@ -159,6 +159,7 @@ bot.callbackQuery(/^ok:(\d+)$/, async (ctx) => {
     addPost({
       topic: draft.topic,
       text: draft.text,
+      image_path: null,
       channel_message_id: sent.message_id,
     });
 
@@ -184,7 +185,7 @@ bot.callbackQuery(/^ok:(\d+)$/, async (ctx) => {
         const plain = stripTags(draft.text);
         const sent = await bot.api.sendMessage(config.CHANNEL_USERNAME, plain);
         markDraftPublished(draftId);
-        addPost({ topic: draft.topic, text: plain, channel_message_id: sent.message_id });
+        addPost({ topic: draft.topic, text: plain, image_path: null, channel_message_id: sent.message_id });
         await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() }).catch(() => {});
         const postLink = `https://t.me/${config.CHANNEL_USERNAME.replace('@', '')}/${sent.message_id}`;
         await ctx.reply(`✅ Post oddiy matn sifatida e'lon qilindi!\n${postLink}`);
@@ -210,13 +211,20 @@ bot.callbackQuery(/^rw:(\d+)$/, async (ctx) => {
 
 export const mainKeyboard = new Keyboard()
   .text('🚀 Yangi post yaratish')
+  .text('✍️ Maxsus mavzuda post')
+  .row()
   .text('📋 Shaxsiy Dayjest')
-  .row()
   .text('📊 Statistika')
-  .text('⚙️ Dayjest Holati')
   .row()
+  .text('⚙️ Dayjest Holati')
   .text('ℹ️ Yordam')
   .resized();
+
+export const cancelKeyboard = new Keyboard()
+  .text('❌ Bekor qilish')
+  .resized();
+
+let _waitingForTopic = false;
 
 // ─── Command & Button Handlers ─────────────────────────────────────────────
 
@@ -226,6 +234,7 @@ async function handleStart(ctx) {
       `Quyidagi buyruqlar va menyu tugmalari orqali botni boshqarishingiz mumkin:\n\n` +
       `<b>📰 Kanal Blog Pipeline:</b>\n` +
       `• 🚀 <b>/generate</b> — Ommaviy yangiliklardan kanal uchun yangi post qoralash\n` +
+      `• ✍️ <b>/write [mavzu/link]</b> — Maxsus mavzu yoki havola (URL) bo'yicha post yozish\n` +
       `• 📊 <b>/status</b> — Kanal statistikasi va kutayotgan qoralamalar\n\n` +
       `<b>📋 Shaxsiy Dayjest Agent:</b>\n` +
       `• 📋 <b>/digest</b> — Telegramingiz (kanallar, guruhlar, shaxsiy yozishmalar) bo'yicha shaxsiy maxfiy hisobot tayyorlash\n` +
@@ -235,6 +244,45 @@ async function handleStart(ctx) {
     {
       parse_mode: 'HTML',
       reply_markup: mainKeyboard,
+    }
+  );
+}
+
+async function handleWrite(ctx) {
+  if (!config.BLOG_ENABLED) {
+    await ctx.reply('⚠️ Blog pipeline o\'chirilgan (BLOG_ENABLED=false).');
+    return;
+  }
+  if (!_generateHandler) {
+    await ctx.reply('⚠️ Generator hali tayyor emas.');
+    return;
+  }
+
+  const text = ctx.message?.text?.trim() || '';
+  const arg = text.replace(/^\/write(@\w+)?\s*/i, '').trim();
+
+  if (arg) {
+    _waitingForTopic = false;
+    await ctx.reply(
+      `✍️ <b>Mavzu qabul qilindi:</b> <i>"${arg.slice(0, 100)}"</i>\n\nAI post tayyorlamoqda, biroz kuting…`,
+      { parse_mode: 'HTML', reply_markup: mainKeyboard }
+    );
+    _generateHandler('custom_topic', { customTopic: arg }).catch((err) => {
+      console.error('[bot] Custom topic error:', err.message);
+    });
+    return;
+  }
+
+  _waitingForTopic = true;
+  await ctx.reply(
+    `✍️ <b>Qaysi mavzuda post yozmoqchisiz?</b>\n\n` +
+      `Mavzu nomini, qisqa g'oyangizni yoki qiziqarli IT maqolaning <b>havolasini (URL link)</b> yuboring:\n\n` +
+      `<i>Misollar:</i>\n` +
+      `• <code>React 19 dagi Server Actions va uning afzalliklari</code>\n` +
+      `• <code>https://techcrunch.com/2026/...</code>`,
+    {
+      parse_mode: 'HTML',
+      reply_markup: cancelKeyboard,
     }
   );
 }
@@ -363,6 +411,7 @@ async function handleDigestStatus(ctx) {
 
 // Register commands
 bot.command('start', handleStart);
+bot.command('write', handleWrite);
 bot.command('generate', handleGenerate);
 bot.command('status', handleStatus);
 bot.command('digest', handleDigest);
@@ -371,15 +420,50 @@ bot.command('help', handleStart);
 
 // Register button text handlers
 bot.hears('🚀 Yangi post yaratish', handleGenerate);
+bot.hears('✍️ Maxsus mavzuda post', handleWrite);
+bot.hears('❌ Bekor qilish', async (ctx) => {
+  _waitingForTopic = false;
+  await ctx.reply('❌ Bekor qilindi.', { reply_markup: mainKeyboard });
+});
 bot.hears('📋 Shaxsiy Dayjest', handleDigest);
 bot.hears('📊 Statistika', handleStatus);
 bot.hears('⚙️ Dayjest Holati', handleDigestStatus);
 bot.hears('ℹ️ Yordam', handleStart);
 
-// ─── Reply with feedback ───────────────────────────────────────────────────
+// ─── Reply with feedback / Custom topic input ─────────────────────────────
 
-// If the owner REPLIES to a draft message with text → treat as feedback
 bot.on('message:text', async (ctx, next) => {
+  // If waiting for custom topic input
+  if (_waitingForTopic) {
+    _waitingForTopic = false;
+    const topic = ctx.message.text.trim();
+    if (topic === '❌ Bekor qilish') {
+      await ctx.reply('❌ Bekor qilindi.', { reply_markup: mainKeyboard });
+      return;
+    }
+    await ctx.reply(
+      `✍️ <b>Mavzu qabul qilindi:</b> <i>"${topic.slice(0, 100)}"</i>\n\nAI post tayyorlamoqda, biroz kuting…`,
+      { parse_mode: 'HTML', reply_markup: mainKeyboard }
+    );
+    _generateHandler('custom_topic', { customTopic: topic }).catch((err) => {
+      console.error('[bot] Custom topic error:', err.message);
+    });
+    return;
+  }
+
+  // Direct URL sent without command (e.g. user simply pasted an article link)
+  if (/^https?:\/\//i.test(ctx.message.text.trim()) && !ctx.message?.reply_to_message) {
+    const url = ctx.message.text.trim();
+    await ctx.reply(
+      `🔗 <b>Havola qabul qilindi!</b>\nMaqola o'rganilib, kanal uchun yangi post qoralanmoqda…`,
+      { parse_mode: 'HTML', reply_markup: mainKeyboard }
+    );
+    _generateHandler('custom_topic', { customTopic: url }).catch((err) => {
+      console.error('[bot] Direct URL post error:', err.message);
+    });
+    return;
+  }
+
   const replyTo = ctx.message?.reply_to_message?.message_id;
 
   if (!replyTo) {

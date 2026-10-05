@@ -54,9 +54,10 @@ bot.start({
     try {
       await bot.api.setMyCommands([
         { command: 'start', description: 'Bosh menyu va yordam' },
+        { command: 'write', description: 'Maxsus mavzu yoki havola bo\'yicha post yozish' },
+        { command: 'generate', description: 'Yangiliklardan avtomatik post yaratish' },
         { command: 'digest', description: 'Shaxsiy dayjest hisobotini olish' },
         { command: 'digest_status', description: 'Dayjest holati va sozlamalari' },
-        { command: 'generate', description: 'Yangi blog post qoralamasi yaratish' },
         { command: 'status', description: 'Blog statistikasi va holat' },
       ]);
     } catch (err) {
@@ -64,6 +65,20 @@ bot.start({
     }
   },
 });
+
+// ── 6.1. Optional HTTP healthcheck server (Alwaysdata / Web platforms) ──────
+const PORT = process.env.PORT;
+const IP = process.env.IP || '0.0.0.0';
+if (PORT) {
+  import('node:http').then(({ default: http }) => {
+    http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('aiSupport Telegram bot is running!\n');
+    }).listen(Number(PORT), IP, () => {
+      console.log(`[index] Health-check server listening on ${IP}:${PORT}`);
+    });
+  });
+}
 
 // ── 7. Graceful shutdown ───────────────────────────────────────────────────
 async function shutdown(signal) {

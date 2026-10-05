@@ -42,6 +42,7 @@ QOIDALAR:
 7. Takrorlamaslik: "recentTopics" ro'yxatidagi mavzularni qayta ko'tarma.
 8. Em-tire (—) va shablonli iboralardan qoching.
 9. Standard emoji ishlatgin, maxsus/premium emoji yo'q.
+10. Maxsus mavzu: Agar "FOYDALANUVCHINING MAXSUS MAVZUSI" yoki "MAQOLA / MANBA MATNI" taqdim etilgan bo'lsa, postni to'liq va faqat shu mavzuga bag'ishlab yoz. Umumiy RSS va guruh xabarlariga chalg'ima.
 
 JAVOB FORMATI (faqat shu, boshqa narsa yo'q):
 MAVZU: <qisqa mavzu sarlavhasi>
@@ -51,7 +52,17 @@ MAVZU: <qisqa mavzu sarlavhasi>
 /**
  * Build the user-facing prompt with all collected data.
  */
-function buildUserPrompt({ groupMessages, rssItems, styleSamples, recentTopics, cta, previousDraft, feedback }) {
+function buildUserPrompt({
+  groupMessages,
+  rssItems,
+  styleSamples,
+  recentTopics,
+  cta,
+  previousDraft,
+  feedback,
+  customTopic,
+  customUrlContent,
+}) {
   const today = new Date().toLocaleDateString('uz-Latn-UZ', {
     weekday: 'long',
     year: 'numeric',
@@ -112,6 +123,20 @@ function buildUserPrompt({ groupMessages, rssItems, styleSamples, recentTopics, 
     lines.push('');
   }
 
+  // Custom user topic or article URL content
+  if (customTopic) {
+    lines.push('── FOYDALANUVCHINING MAXSUS TOPSHIRIG\'I / MAVZUSI ──');
+    lines.push(customTopic);
+    lines.push('');
+  }
+
+  if (customUrlContent) {
+    lines.push('── MAQOLA / MANBA MATNI (Havola orqali yuklangan) ──');
+    if (customUrlContent.title) lines.push(`Sarlavha: ${customUrlContent.title}`);
+    lines.push(customUrlContent.content || String(customUrlContent));
+    lines.push('');
+  }
+
   if (feedback) {
     lines.push('── EGASINING IZOHI / TUZATISH ──────────────────────────');
     lines.push(feedback);
@@ -124,16 +149,17 @@ function buildUserPrompt({ groupMessages, rssItems, styleSamples, recentTopics, 
 
 /**
  * Parse the model response in "MAVZU: …\n---\n<html>" format.
- * Returns {topic, text} or throws if format is wrong.
+ * Returns {topic, text, needsImage, imagePrompt} or throws if format is wrong.
  */
 function parseResponse(responseText) {
-  const match = responseText.match(/MAVZU:\s*(.+?)\n-{3,}\n([\s\S]+)/);
+  const match = responseText.match(/MAVZU:\s*(.+?)\n-{3,}\n([\s\S]+)/i);
   if (!match) {
     throw new Error(`[aiService] Unexpected model response format:\n${responseText.slice(0, 200)}`);
   }
-  const topic = match[1].trim();
-  const text = toTelegramHtml(match[2].trim());
-  return { topic, text };
+  return {
+    topic: match[1].trim(),
+    text: toTelegramHtml(match[2].trim()),
+  };
 }
 
 /**
@@ -141,23 +167,27 @@ function parseResponse(responseText) {
  * If the output is over 4000 chars, asks once more for a shorter version.
  *
  * @param {object} params
- * @param {Array}  params.groupMessages  – [{chat, messages[]}]
- * @param {Array}  params.rssItems       – [{source, title, link, summary}]
- * @param {Array}  [params.styleSamples] – string[]
- * @param {Array}  [params.recentTopics] – string[]
- * @param {string} params.cta            – selected CTA idea
+ * @param {Array}  [params.groupMessages]  – [{chat, messages[]}]
+ * @param {Array}  [params.rssItems]       – [{source, title, link, summary}]
+ * @param {Array}  [params.styleSamples]   – string[]
+ * @param {Array}  [params.recentTopics]   – string[]
+ * @param {string} params.cta              – selected CTA idea
  * @param {string} [params.previousDraft]
  * @param {string} [params.feedback]
+ * @param {string} [params.customTopic]    – user-specified custom topic
+ * @param {object} [params.customUrlContent] – {title, content} from article URL
  * @returns {Promise<{topic: string, text: string}>}
  */
 export async function generatePost({
-  groupMessages,
-  rssItems,
+  groupMessages = [],
+  rssItems = [],
   styleSamples = [],
   recentTopics = [],
   cta,
   previousDraft,
   feedback,
+  customTopic,
+  customUrlContent,
 }) {
   const model = config.GEMINI_MODEL;
   const userPrompt = buildUserPrompt({
@@ -168,10 +198,13 @@ export async function generatePost({
     cta,
     previousDraft,
     feedback,
+    customTopic,
+    customUrlContent,
   });
 
   const candidateModels = [
     model,
+    'gemini-3.1-pro-preview',
     'gemini-3.7-flash',
     'gemini-3.8-flash',
     'gemini-3.5-flash',
@@ -245,3 +278,4 @@ export async function generatePost({
   console.log(`[aiService] Generated topic: "${result.topic}" (${result.text.length} chars)`);
   return result;
 }
+

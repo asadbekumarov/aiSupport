@@ -21,6 +21,7 @@ db.exec(`
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     topic       TEXT    NOT NULL,
     text        TEXT    NOT NULL,
+    image_path  TEXT,
     context     TEXT    NOT NULL DEFAULT '{}',
     rewrites    INTEGER NOT NULL DEFAULT 0,
     status      TEXT    NOT NULL DEFAULT 'pending',
@@ -32,6 +33,7 @@ db.exec(`
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     topic              TEXT NOT NULL,
     text               TEXT NOT NULL,
+    image_path         TEXT,
     channel_message_id INTEGER,
     published_at       TEXT NOT NULL DEFAULT (datetime('now'))
   );
@@ -42,14 +44,22 @@ db.exec(`
   );
 `);
 
+// Safe column migrations for existing databases
+try {
+  db.exec('ALTER TABLE drafts ADD COLUMN image_path TEXT;');
+} catch (_) {}
+try {
+  db.exec('ALTER TABLE posts ADD COLUMN image_path TEXT;');
+} catch (_) {}
+
 // ─── Prepared statements ───────────────────────────────────────────────────
 // node:sqlite uses the same prepare() API as better-sqlite3 but returns
 // StatementSync objects with .run() / .get() / .all() methods.
 
 const stmts = {
   createDraft: db.prepare(`
-    INSERT INTO drafts (topic, text, context, rewrites, status)
-    VALUES (?, ?, ?, 0, 'pending')
+    INSERT INTO drafts (topic, text, image_path, context, rewrites, status)
+    VALUES (?, ?, ?, ?, 0, 'pending')
   `),
 
   getDraft: db.prepare(`SELECT * FROM drafts WHERE id = ?`),
@@ -59,8 +69,12 @@ const stmts = {
   `),
 
   updateDraftText: db.prepare(`
-    UPDATE drafts SET text = ?, topic = ?, rewrites = rewrites + 1
+    UPDATE drafts SET text = ?, topic = ?, image_path = COALESCE(?, image_path), rewrites = rewrites + 1
     WHERE id = ?
+  `),
+
+  updateDraftImage: db.prepare(`
+    UPDATE drafts SET image_path = ? WHERE id = ?
   `),
 
   setDraftMessageId: db.prepare(`
@@ -72,8 +86,8 @@ const stmts = {
   `),
 
   addPost: db.prepare(`
-    INSERT INTO posts (topic, text, channel_message_id)
-    VALUES (?, ?, ?)
+    INSERT INTO posts (topic, text, image_path, channel_message_id)
+    VALUES (?, ?, ?, ?)
   `),
 
   recentTopics: db.prepare(`
@@ -107,8 +121,8 @@ function parseRow(row) {
 // ─── Public helpers ────────────────────────────────────────────────────────
 
 /** Create a new draft, return its id. */
-export function createDraft({ topic, text, context }) {
-  const result = stmts.createDraft.run(topic, text, JSON.stringify(context));
+export function createDraft({ topic, text, image_path = null, context }) {
+  const result = stmts.createDraft.run(topic, text, image_path, JSON.stringify(context));
   return Number(result.lastInsertRowid);
 }
 
@@ -123,8 +137,13 @@ export function getDraftByMessageId(messageId) {
 }
 
 /** Update draft text/topic and increment the rewrite counter. */
-export function updateDraftText({ id, topic, text }) {
-  stmts.updateDraftText.run(text, topic, id);
+export function updateDraftText({ id, topic, text, image_path = null }) {
+  stmts.updateDraftText.run(text, topic, image_path, id);
+}
+
+/** Update draft image path. */
+export function updateDraftImage({ id, image_path }) {
+  stmts.updateDraftImage.run(image_path, id);
 }
 
 /** Store the message_id of the bot message sent to the owner. */
@@ -138,8 +157,8 @@ export function markDraftPublished(id) {
 }
 
 /** Record a published channel post. */
-export function addPost({ topic, text, channel_message_id }) {
-  stmts.addPost.run(topic, text, channel_message_id ?? null);
+export function addPost({ topic, text, image_path = null, channel_message_id }) {
+  stmts.addPost.run(topic, text, image_path, channel_message_id ?? null);
 }
 
 /** Return the last n published topics for deduplication. */

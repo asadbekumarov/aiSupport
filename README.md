@@ -7,22 +7,23 @@ Telegram uchun shaxsiy avtomatlashtirish tizimi. Tizim IT yangiliklar materialin
 ## Qanday ishlaydi
 
 ```
-Cron / /generate
+Cron / /generate / /write
        │
        ▼
  [UserBot] SOURCE_CHATS'dan xabarlar o'qiydi
  [RSS]     Yangilik tasmalari yuklanadi
+ [Web]     Maqola havolalari o'rganiladi
        │
        ▼
- [Gemini]  Google Search orqali post qoralaydi
+ [Gemini]  O'zbek tilida sifatli post qoralaydi
        │
        ▼
- [Bot]     Egasiga qoralama + tugmalar yuboradi
+ [Bot]     Egasiga qoralama + boshqaruv tugmalarini yuboradi
        │
    ┌───┴───────────────────────┐
    │ ✅ Tasdiqlash             │ 🔄 Qayta yozish
    ▼                           ▼
-Kanalga e'lon qilinadi    Yangi versiya tayyorlanadi
+Kanalga matn chiqadi        Yangi versiya
 ```
 
 Hech narsa tasdiqlashsiz e'lon qilinmaydi.

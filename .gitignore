@@ -9,6 +9,8 @@ data/*.db-wal
 # Channel export files (may contain personal data)
 data/exports/*
 !data/exports/.gitkeep
+data/images/*
+!data/images/.gitkeep
 
 # Logs
 *.log
