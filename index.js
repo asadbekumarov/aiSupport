@@ -31,7 +31,12 @@ setDigestHandler(runDigest);
 // ── 4. Connect the UserBot (GramJS) ───────────────────────────────────────
 console.log('[index] Connecting UserBot…');
 try {
-  await getClient();
+  await Promise.race([
+    getClient(),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('UserBot connect timeout (12s)')), 12000)
+    ),
+  ]);
   console.log('[index] UserBot connected.');
 } catch (err) {
   console.error('[index] UserBot connection failed:', err.message ?? err);
@@ -49,25 +54,38 @@ try {
   await notifyOwner(`⚠️ Scheduler xatosi: ${err.message}`);
 }
 
-// ── 6. Start the grammY bot ────────────────────────────────────────────────
-console.log('[index] Starting grammY bot (long-polling)…');
-bot.start({
-  onStart: async (info) => {
-    console.log(`[index] Bot started as @${info.username}. Ready.`);
+// ── 6. Start the grammY bot with automatic reconnect loop ─────────────────
+async function runBotLoop() {
+  while (true) {
     try {
-      await bot.api.setMyCommands([
-        { command: 'start', description: 'Bosh menyu va yordam' },
-        { command: 'write', description: 'Maxsus mavzu yoki havola bo\'yicha post yozish' },
-        { command: 'generate', description: 'Yangiliklardan avtomatik post yaratish' },
-        { command: 'digest', description: 'Shaxsiy dayjest hisobotini olish' },
-        { command: 'digest_status', description: 'Dayjest holati va sozlamalari' },
-        { command: 'status', description: 'Blog statistikasi va holat' },
-      ]);
+      console.log('[index] Starting grammY bot (long-polling)…');
+      await bot.start({
+        drop_pending_updates: false,
+        onStart: async (info) => {
+          console.log(`[index] Bot started as @${info.username}. Ready.`);
+          try {
+            await bot.api.setMyCommands([
+              { command: 'start', description: 'Bosh menyu va yordam' },
+              { command: 'write', description: 'Maxsus mavzu yoki havola bo\'yicha post yozish' },
+              { command: 'generate', description: 'Yangiliklardan avtomatik post yaratish' },
+              { command: 'digest', description: 'Shaxsiy dayjest hisobotini olish' },
+              { command: 'digest_status', description: 'Dayjest holati va sozlamalari' },
+              { command: 'status', description: 'Blog statistikasi va holat' },
+            ]);
+          } catch (err) {
+            console.warn('[index] Failed to register bot commands menu:', err.message);
+          }
+        },
+      });
     } catch (err) {
-      console.warn('[index] Failed to register bot commands menu:', err.message);
+      console.error('[index] grammY polling error:', err.message ?? err);
+      console.log('[index] Retrying bot polling in 5 seconds…');
+      await new Promise((r) => setTimeout(r, 5000));
     }
-  },
-});
+  }
+}
+
+runBotLoop();
 
 // ── 6.1. Optional HTTP healthcheck server (Alwaysdata / Web platforms) ──────
 const PORT = process.env.PORT;
