@@ -80,4 +80,17 @@ export const config = {
   MAX_REWRITES: Number(process.env.MAX_REWRITES ?? 5),
   DB_PATH: process.env.DB_PATH ?? './data/agent.db',
   EXPORTS_DIR: process.env.EXPORTS_DIR ?? './data/exports',
+
+  // Topic categories
+  TOPIC_WEIGHTS: process.env.TOPIC_WEIGHTS ?? 'it:50,karyera:15,imkoniyatlar:15,oqish:10,fan:10',
+  ENABLE_TOPICS: (process.env.ENABLE_TOPICS ?? '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean),
+
+  // Growth module
+  GROWTH_PACK: process.env.GROWTH_PACK !== 'false',
+  GROWTH_LANG: process.env.GROWTH_LANG ?? 'uz',
+  PROMO_EVERY: Number(process.env.PROMO_EVERY ?? 3),
 };
+

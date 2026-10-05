@@ -23,6 +23,9 @@ import { runPipeline } from './src/pipeline.js';
 import { runDigest } from './src/digest.js';
 import { startScheduler } from './src/scheduler.js';
 import { bot, setGenerateHandler, setDigestHandler, notifyOwner } from './src/bot.js';
+import { getActiveCategoriesSummary } from './src/topics.js';
+
+console.log(`[index] Active blog categories: ${getActiveCategoriesSummary()}`);
 
 // ── 3. Wire the handlers (breaks circular imports) ─────────────────────────
 setGenerateHandler(runPipeline);
@@ -61,6 +64,7 @@ async function runBotLoop() {
       console.log('[index] Starting grammY bot (long-polling)…');
       await bot.start({
         drop_pending_updates: false,
+        allowed_updates: ['message', 'callback_query', 'chat_member', 'my_chat_member'],
         onStart: async (info) => {
           console.log(`[index] Bot started as @${info.username}. Ready.`);
           try {
@@ -68,9 +72,12 @@ async function runBotLoop() {
               { command: 'start', description: 'Bosh menyu va yordam' },
               { command: 'write', description: 'Maxsus mavzu yoki havola bo\'yicha post yozish' },
               { command: 'generate', description: 'Yangiliklardan avtomatik post yaratish' },
+              { command: 'topics', description: 'Mavzular vaznlari va statistikasi' },
               { command: 'digest', description: 'Shaxsiy dayjest hisobotini olish' },
               { command: 'digest_status', description: 'Dayjest holati va sozlamalari' },
               { command: 'status', description: 'Blog statistikasi va holat' },
+              { command: 'magnit', description: 'Yangi lead magnit yaratish' },
+              { command: 'magnitlar', description: 'Lead magnitlar ro\'yxati va ko\'rishlar' },
             ]);
           } catch (err) {
             console.warn('[index] Failed to register bot commands menu:', err.message);

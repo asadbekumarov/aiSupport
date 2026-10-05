@@ -1,21 +1,24 @@
-// src/aiService.js – Gemini integration for post generation
+// src/aiService.js – Gemini & Groq integration for post generation
 import { GoogleGenAI } from '@google/genai';
 import { config } from './config.js';
 import { toTelegramHtml } from './format.js';
+import { HARD_EXCLUSIONS } from './topics.js';
 
 const ai = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY });
 
 // ─── CTA ideas ─────────────────────────────────────────────────────────────
-// A variety of calls-to-action so each post feels fresh.
+// ─── CTA ideas ─────────────────────────────────────────────────────────────
+// Forward / share / discussion requests fitting the post.
+// NEVER ask readers to subscribe because they are already channel subscribers.
 const CTA_IDEAS = [
-  "Do'stlaringni ham taklif qil — ularga ham foydali bo'lishi mumkin! 👇",
-  'Fikringni izohlarda qoldiring — biz muhokama qilamiz! 💬',
-  "Bu haqda batafsil bilishni xohlaysanmi? Savol ber — javob beramiz! 🙋",
-  "Kanalingga qo'sh va har yangilikdan birinchi xabardor bo'l! 🔔",
-  "Buni foydali deb bilgan do'stingga ulash — ikki kishi foydalanar! 🤝",
-  "Siz ham shu texnologiyani ishlatganmisiz? Tajribangizni yozing! 💡",
-  "Obuna bo'lib qol — IT dunyosidagi yangiliklar har kuni shu yerda! 📲",
-  "Qaysi texnologiyani keyingi postda tahlil qilishimni izohlarda yoz! 🗳️",
+  "Buni ish qidirayotgan yoki loyihasi bor do'stingga yubor — foydasi tegishi aniq! 🤝",
+  "Fikringni izohlarda yoz — birga muhokama qilamiz! 💬",
+  "Ushbu ma'lumotni yangi texnologiyalarga qiziqqan do'stingga ulash! 💡",
+  "Buni jamoangiz chatiga yoki dasturchi tanishingizga forward qilib qo'y! 📲",
+  "Buni foydali deb bilgan do'stingga yubor — birga o'rganish osonroq! 👥",
+  "Siz ham shu holat yoki vositaga duch kelganmisiz? Tajribangizni izohlarda ulashing! 💡",
+  "Qaysi mavzuni keyingi postda tahlil qilishimizni xohlaysiz? Fikringizni yozing! 🗳️",
+  "Buni yangiliklardan orqada qolishni istamaydigan hamkasbingizga yuboring! ⚡",
 ];
 
 /** Returns a random CTA string. */
@@ -23,9 +26,30 @@ export function pickCta() {
   return CTA_IDEAS[Math.floor(Math.random() * CTA_IDEAS.length)];
 }
 
-// ─── System prompt (in Uzbek as required) ─────────────────────────────────
-const SYSTEM_PROMPT = `\
-Sen IT sohasidagi mutaxassissan. Maqsading — o'quvchilarga foydali IT yangiliklarini ulashish va 1 oy ichida kanalga 100+ ta yangi faol obunachi yig'ish. Har bir postda qiziqarli sarlavha, sodda o'zbek tilidagi tushuntirish va o'quvchilarni do'stlarini taklif qilishga undaydigan kreativ Call-to-Action (CTA) bo'lsin.
+// ─── System prompt builder ─────────────────────────────────────────────────
+export function buildSystemPrompt(category = { id: 'it', name: 'IT va Texnologiyalar', guidance: "IT yangiliklari, dasturlash, AI, vositalar, o'zbekistonlik dasturchi uchun foydasi." }) {
+  const isIt = category.id === 'it';
+
+  let categoryBlock = `\nKanal asosan IT haqida, lekin ba'zan boshqa foydali mavzularda ham yozadi. Bugungi postning yo'nalishi: ${category.name}. ${category.guidance}. Maqsad o'zgarmaydi: o'zbek auditoriyasiga foydali post va do'stlarga ulashishga undovchi samimiy CTA.`;
+
+  if (!isIt) {
+    categoryBlock += `\nUshbu postni umumiy o'zbek yoshlari auditoriyasi uchun (faqat dasturchilar uchun emas) moslashtirib, sodda va tushunarli tilda yoz. Barcha asosiy qoidalarga rioya qil: lotin yozuvi, 150–250 so'z, to'qima faktlarsiz, o'z so'zlaring bilan, sun'iy (AI) iboralardan xoli, faqat Telegram HTML teglari.`;
+  }
+
+  let specialRules = '';
+  if (category.id === 'pul') {
+    specialRules += `\n\nMOLIYAVIY SAVODXONLIK TALABI: Hech qachon investitsiya maslahati berma va daromad va'da qilma. Post oxirida albatta qisqa bitta jumla qo'sh: "Bu moliyaviy maslahat emas."`;
+  } else if (category.id === 'imkoniyatlar') {
+    specialRules += `\n\nIMKONIYATLAR TALABI: Faqat tasdiqlangan, muddati (deadline) hali o'tmagan imkoniyat haqida yoz. Muddat va rasmiy havola postda albatta bo'lsin. Ishonchli havola yoki aniq muddat topilmasa, boshqa mavzu tanla va hech narsa to'qima.`;
+  }
+
+  const exclusions = HARD_EXCLUSIONS.join(', ');
+
+  return `Sen IT sohasidagi mutaxassissan. Maqsading — o'quvchilarga eng foydali va amaliy yangiliklarni ulashish. Har bir postda qiziqarli sarlavha, sodda o'zbek tilidagi tushuntirish va o'quvchilarni do'stlariga forward qilishga / ulashishga undaydigan tabiiy Call-to-Action (CTA) bo'lsin.
+${categoryBlock}${specialRules}
+
+QAT'IY TAQIQLANGAN MAVZULAR (HARD EXCLUSIONS):
+Har qanday kategoriya uchun quyidagi mavzular qat'iyan taqiqlanadi: ${exclusions}. Agar to'plangan material yoki qidiruv natijalari shu mavzularga olib kelsa, AI albatta boshqa mavzu tanlashi shart.
 
 QOIDALAR:
 1. Til: O'zbek tili, lotin yozuvi. Texnik atamalar inglizcha qolsin (framework, API, deploy, open source, bug, release va h.k.).
@@ -33,26 +57,29 @@ QOIDALAR:
 3. Tuzilma:
    • Bitta kuchli sarlavha (qalin, 1 emoji bilan boshlansin)
    • Nima bo'ldi — qisqa, aniq
-   • Nima uchun muhim / O'zbekistondagi dasturchi uchun nima ma'no anglatadi
-   • CTA (taqdim etilgan g'oyani ishlatib, original tarzda)
+   • Nima uchun muhim / Auditoriya uchun nima ma'no anglatadi
+   • CTA (bitta qisqa gap, samimiy forward/ulashish so'rovi)
    • 2–3 hashtag
-4. Uslub: Jonli, do'stona, qisqa gaplar. AI yozgandek ko'rinmasin. Uslub namunalaridan faqat ohang, gap uzunligi, emoji ishlatish va tuzilmani ol — hech qachon gaplarni ko'chirma.
-5. Faktlar: Faqat berilgan materialdan yoki Google Search tasdiqlagan ma'lumotdan foyda. O'zi ixtiro qilma.
-6. Manbalar: Agar ishonchli havola bo'lsa, oxirida bitta havolani HTML <a href> bilan qo'sh.
-7. Takrorlamaslik: "recentTopics" ro'yxatidagi mavzularni qayta ko'tarma.
-8. Em-tire (—) va shablonli iboralardan qoching.
-9. Standard emoji ishlatgin, maxsus/premium emoji yo'q.
-10. Maxsus mavzu: Agar "FOYDALANUVCHINING MAXSUS MAVZUSI" yoki "MAQOLA / MANBA MATNI" taqdim etilgan bo'lsa, postni to'liq va faqat shu mavzuga bag'ishlab yoz. Umumiy RSS va guruh xabarlariga chalg'ima.
+4. QAT'IY QOIDA — OBUNA SO'RAMASLIK: Postda HECH QACHON "obuna bo'ling", "kanalga a'zo bo'ling" yoki "kanalda qoling" kabi iboralarni ishlatma (chunki o'quvchilar allaqachon kanal obunachisidir). CTA faqat post mazmuniga mos bitta aniq ulashish taklifi bo'lsin (masalan: "Buni ish qidirayotgan do'stingga yubor").
+5. Uslub: Jonli, do'stona, qisqa gaplar. AI yozgandek ko'rinmasin. Uslub namunalaridan faqat ohang, gap uzunligi, emoji ishlatish va tuzilmani ol — hech qachon gaplarni ko'chirma.
+6. Faktlar: Faqat berilgan materialdan yoki Google Search tasdiqlagan ma'lumotdan foydalan. O'zing ixtiro qilma.
+7. Manbalar: Agar ishonchli havola bo'lsa, oxirida bitta havolani HTML <a href> bilan qo'sh.
+8. Takrorlamaslik: "OLDIN CHIQQAN MAVZULAR" ro'yxatidagi mavzularni qayta ko'tarma.
+9. Em-tire (—) va shablonli iboralardan qoching.
+10. Standard emoji ishlatgin, maxsus/premium emoji yo'q.
+11. Maxsus mavzu: Agar "FOYDALANUVCHINING MAXSUS TOPSHIRIG'I / MAVZUSI" yoki "MAQOLA / MANBA MATNI" taqdim etilgan bo'lsa, postni to'liq va faqat shu mavzuga bag'ishlab yoz. Umumiy RSS va guruh xabarlariga chalg'ima.
 
 JAVOB FORMATI (faqat shu, boshqa narsa yo'q):
 MAVZU: <qisqa mavzu sarlavhasi>
 ---
 <post HTML matni>`;
+}
 
 /**
  * Build the user-facing prompt with all collected data.
  */
 function buildUserPrompt({
+  category = { id: 'it', name: 'IT va Texnologiyalar' },
   groupMessages,
   rssItems,
   styleSamples,
@@ -70,7 +97,15 @@ function buildUserPrompt({
     day: 'numeric',
   });
 
-  const lines = [`📅 Bugungi sana: ${today}`, ''];
+  const lines = [
+    `📅 Bugungi sana: ${today}`,
+    `🎯 POST YO'NALISHI / KATEGORIYASI: ${category.name} (${category.id})`,
+  ];
+
+  if (category.searchHint) {
+    lines.push(`🔍 Google Search / Qidiruv tavsiyasi: ${category.searchHint}`);
+  }
+  lines.push('');
 
   // Group messages from Telegram chats
   if (groupMessages?.length > 0) {
@@ -81,7 +116,7 @@ function buildUserPrompt({
     }
     lines.push('');
   } else {
-    lines.push('── GURUH MUHOKAMALAR: mavjud emas ──\n');
+    lines.push('── GURUH MUHOKAMALAR: mavjud emas (yoki boshqa kategoriya) ──\n');
   }
 
   // RSS news items
@@ -94,7 +129,7 @@ function buildUserPrompt({
     });
     lines.push('');
   } else {
-    lines.push('── RSS YANGILIKLAR: mavjud emas ──\n');
+    lines.push('── RSS YANGILIKLAR: mavjud emas (Google Search orqali qidiring) ──\n');
   }
 
   // Style samples – tone/structure reference only
@@ -104,9 +139,9 @@ function buildUserPrompt({
     lines.push('');
   }
 
-  // Recent topics to avoid duplicates
+  // Recent topics to avoid duplicates (covers all categories)
   if (recentTopics?.length > 0) {
-    lines.push(`── SO'NGGI MAVZULAR (takrorlamaslik uchun) ──────────────`);
+    lines.push(`── OLDIN CHIQQAN MAVZULAR (takrorlamaslik uchun) ──────────`);
     recentTopics.forEach((t, i) => lines.push(`${i + 1}. ${t}`));
     lines.push('');
   }
@@ -163,10 +198,11 @@ function parseResponse(responseText) {
 }
 
 /**
- * Call Gemini with the given materials and return {topic, text}.
+ * Call Gemini/Groq with the given materials and return {topic, text}.
  * If the output is over 4000 chars, asks once more for a shorter version.
  *
  * @param {object} params
+ * @param {object} [params.category]       – selected topic category
  * @param {Array}  [params.groupMessages]  – [{chat, messages[]}]
  * @param {Array}  [params.rssItems]       – [{source, title, link, summary}]
  * @param {Array}  [params.styleSamples]   – string[]
@@ -179,6 +215,7 @@ function parseResponse(responseText) {
  * @returns {Promise<{topic: string, text: string}>}
  */
 export async function generatePost({
+  category = { id: 'it', name: 'IT va Texnologiyalar' },
   groupMessages = [],
   rssItems = [],
   styleSamples = [],
@@ -190,7 +227,9 @@ export async function generatePost({
   customUrlContent,
 }) {
   const model = config.GEMINI_MODEL;
+  const systemPrompt = buildSystemPrompt(category);
   const userPrompt = buildUserPrompt({
+    category,
     groupMessages,
     rssItems,
     styleSamples,
@@ -204,18 +243,25 @@ export async function generatePost({
 
   const candidateModels = [
     model,
-    'gemini-3.1-pro-preview',
-    'gemini-3.7-flash',
     'gemini-3.8-flash',
     'gemini-3.5-flash',
+    'gemini-3.1-pro-preview',
+    'gemini-3.7-flash',
     'gemini-3.5-flash-lite',
-  ].filter((m, i, arr) => arr.indexOf(m) === i && Boolean(m) && m !== 'gemini-flash-latest');
+  ].filter(
+    (m, i, arr) =>
+      arr.indexOf(m) === i &&
+      Boolean(m) &&
+      m !== 'gemini-flash-latest' &&
+      m !== 'gemini-2.5-flash' &&
+      m !== 'gemini-2.0-flash'
+  );
 
   // ── Groq Provider (Primary when GROQ_API_KEY is configured) ─────────────
   if (config.GROQ_API_KEY) {
     try {
       const groqModel = config.GROQ_MODEL || 'qwen/qwen3.8-27b';
-      console.log(`[aiService] Generating post with Groq (${groqModel})…`);
+      console.log(`[aiService] Generating post with Groq (${groqModel}) for category "${category.id}"…`);
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -225,7 +271,7 @@ export async function generatePost({
         body: JSON.stringify({
           model: groqModel,
           messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
           ],
           temperature: 0.8,
@@ -259,7 +305,8 @@ export async function generatePost({
             contents,
             config: {
               temperature: 0.9,
-              systemInstruction: SYSTEM_PROMPT,
+              systemInstruction: systemPrompt,
+              tools: [{ googleSearch: {} }],
             },
           });
           if (res.text) return res;
@@ -288,12 +335,11 @@ export async function generatePost({
     throw lastError ?? new Error('[aiService] Barcha Gemini modellari javob bera olmadi');
   }
 
-  console.log(`[aiService] Generating post with Gemini model "${model}"…`);
+  console.log(`[aiService] Generating post with Gemini model "${model}" for category "${category.id}"…`);
 
   const response = await callModel([{ role: 'user', parts: [{ text: userPrompt }] }]);
 
   let responseText = response.text ?? '';
-
   let result = parseResponse(responseText);
 
   // If the generated HTML is too long, ask for a shorter version once
@@ -313,7 +359,6 @@ export async function generatePost({
     result = parseResponse(responseText);
   }
 
-  console.log(`[aiService] Generated topic: "${result.topic}" (${result.text.length} chars)`);
+  console.log(`[aiService] Generated topic: "${result.topic}" (${result.text.length} chars) [category: ${category.id}]`);
   return result;
 }
-

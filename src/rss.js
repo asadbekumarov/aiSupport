@@ -54,14 +54,15 @@ async function fetchFeed(url) {
 }
 
 /**
- * Fetch all configured RSS feeds in parallel.
+ * Fetch all configured RSS feeds (or customFeeds) in parallel.
  * A failing feed is logged but does NOT break the rest.
  *
+ * @param {string[]} [customFeeds] – optional custom feeds list
  * @returns {Promise<Array<{source:string, title:string, link:string, summary:string}>>}
  */
-export async function fetchRssItems() {
-  const feeds = config.RSS_FEEDS;
-  if (feeds.length === 0) return [];
+export async function fetchRssItems(customFeeds = null) {
+  const feeds = customFeeds ?? config.RSS_FEEDS;
+  if (!feeds || feeds.length === 0) return [];
 
   const results = await Promise.allSettled(feeds.map(fetchFeed));
 

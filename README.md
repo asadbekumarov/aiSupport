@@ -138,6 +138,40 @@ Bu buyruq pipeline ni darhol ishga tushiradi. Bir necha soniyadan so'ng sizga qo
 
 ---
 
+---
+
+## Mavzular va Kategoriyalar (Topic Categories)
+
+Bot nafaqat IT, balki o'quvchilar uchun qiziqarli va foydali bo'lgan turli yo'nalishlarda ham postlar tayyorlay oladi.
+
+### Mavjud kategoriyalar:
+
+1. **`it`** (Standart vazn: 50%) — IT yangiliklari, dasturlash, sun'iy intellekt (AI), yangi vositalar va o'zbekistonlik dasturchi uchun amaliy foydasi. Ommaviy Telegram guruhlar, RSS va Google Search orqali material to'playdi.
+2. **`karyera`** (Standart vazn: 15%) — Ish topish, suhbat/intervyu sirlari, rezyume (CV), freelance, soft skills va zamonaviy kasblar bozori. O'zbekiston kontekstidagi amaliy tavsiyalar.
+3. **`imkoniyatlar`** (Standart vazn: 15%) — Xalqaro va mahalliy grantlar, stipendiyalar, tanlovlar, hackathonlar, bepul kurslar va almashinuv dasturlari. Faqat muddati (deadline) o'tmagan, rasmiy havolasi mavjud tasdiqlangan imkoniyatlar.
+4. **`oqish`** (Standart vazn: 10%) — Samarali o'rganish texnikalari, chet tillarini o'rganish, kitob tavsiyalari, vaqtni boshqarish (time management), foydali odatlar va mahsuldorlik.
+5. **`fan`** (Standart vazn: 10%) — Ilm-fan yangiliklari, koinot/kosmos sirlari, qiziqarli ilmiy faktlar va kelajak texnologiyalari.
+6. **`pul`** (Standart vazn: 0%, nofaol) — Shaxsiy byudjet, tejash qoidalari va moliyaviy savodxonlik. *Muhim:* Investitsiya yoki daromad va'da qilinmaydi, postda "Bu moliyaviy maslahat emas" eslatmasi bo'ladi.
+
+> 🚫 **Qat'iy taqiqlangan mavzular (Hard Exclusions):** Barcha kategoriyalarda siyosat, din, tibbiy/sog'liq maslahatlari, investitsiya tavsiyalari, mish-mishlar va shaxsiy hayot bo'yicha post yozish qat'iyan man etilgan.
+
+### Vaznlarni sozlash va `pul` mavzusini yoqish:
+
+`.env` faylida quyidagi o'zgaruvchilar orqali kategoriyalar ulushini o'zgartirishingiz mumkin:
+
+```env
+# Mavzular nisbati (vaznlar avtomatik foizlarga normalizatsiya qilinadi)
+TOPIC_WEIGHTS="it:40,karyera:20,imkoniyatlar:20,oqish:10,fan:10"
+
+# O'chirilgan mavzularni faollashtirish (masalan, pul mavzusini yoqish):
+ENABLE_TOPICS=pul
+TOPIC_WEIGHTS="it:40,karyera:15,imkoniyatlar:15,oqish:10,fan:10,pul:10"
+```
+
+Bot bir kategoriyadagi postni ketma-ket 3 marta chiqarmaydi (oxirgi 2 ta post tekshirilib, xilma-xillik ta'minlanadi).
+
+---
+
 ## Kanal eksportlarini qo'shish (uslub namunalari)
 
 Tizimga o'z kanal postlaringizning uslubini o'rgatish uchun:
@@ -150,7 +184,13 @@ Tizimga o'z kanal postlaringizning uslubini o'rgatish uchun:
    - Media: **OFF** (kerak emas)
 5. Yuklab olingan `result.json` faylini `data/exports/` papkasiga qo'ying
 
-Bot qayta ishga tushganda uslub namunalarini avtomatik yuklaydi. Bir nechta `.json` fayl qo'yish mumkin.
+### Kategoriya bo'yicha alohida uslub namunalari:
+
+Agar muayyan kategoriya (masalan, karyera yoki ilm-fan) uchun alohida kanal uslubini o'rgatmoqchi bo'lsangiz, JSON eksportlarni `data/exports/<kategoriya_id>/` papkasiga joylashtiring:
+- `data/exports/karyera/result.json`
+- `data/exports/fan/result.json`
+
+Agar kategoriya papkasi topilmasa, bot avtomatik ravishda `data/exports/` ildizidagi barcha eksportlardan umumiy uslub namunalarini oladi.
 
 ---
 
@@ -178,17 +218,21 @@ pm2 logs it-agent
 | Buyruq | Vazifasi |
 |--------|----------|
 | `/start` | Bosh menyu va yordam |
+| `/topics` | Mavzular ro'yxati, ularning vaznlari (%) va e'lon qilingan postlar statistikasi |
+| `/generate` | Vaznlar asosida tasodifiy kategoriyada yangi post qoralash |
+| `/generate <kategoriya>` | Aniq belgilangan kategoriya bo'yicha post yaratish (masalan: `/generate karyera`) |
+| `/write [mavzu/link]` | Maxsus mavzu yoki maqola havolasi (URL) bo'yicha post yozish |
+| `/status` | Blog statistikasi va kutayotgan qoralamalar |
 | `/digest` | **Shaxsiy Dayjest** — telegramingiz tahlilini hoziroq olish |
 | `/digest_status` | Shaxsiy dayjest holati va oxirgi hisobot vaqti |
-| `/generate` | Kanal uchun yangi blog qoralama post yaratish |
-| `/status` | Blog statistikasi va kutayotgan qoralamalar |
 
 ### Qoralama bilan ishlash
 
-Qoralama kelgach, sizda ikkita tugma bo'ladi:
+Qoralama kelgach, uning tagida uchta boshqaruv tugmasi bo'ladi:
 
-- **✅ Tasdiqlash va chiqarish** — postni kanalga e'lon qiladi
-- **🔄 Qayta yozish** — yangi versiya tayyorlaydi (maksimal 5 marta)
+- **✅ Tasdiqlash va chiqarish** — postni kanalga e'lon qiladi (kategoriyasi bilan saqlanadi)
+- **🔄 Qayta yozish** — xuddi shu kategoriyada yangi versiya tayyorlaydi
+- **🔀 Boshqa mavzu** — boshqa kategoriyani tanlab, shu xabarni o'z joyida tahrirlaydi (in-place edit)
 
 Qoralama xabariga **javob yozsangiz** — u izoh sifatida qabul qilinadi va AI shu izohi asosida qayta yozadi:
 
@@ -249,6 +293,50 @@ Agar tahlil davrida hech qanday muhim narsa topilmasa, bot shunchaki `Yangi muhi
 
 ---
 
+## 📈 O'sish moduli (Growth Module)
+
+Kanal auditoriyasini tabiiy va xavfsiz kengaytirish uchun o'rnatilgan o'sish mexanizmlari.
+
+> [!CAUTION]
+> **Xavfsizlik qoidasi:** Barcha o'sish mexanizmlari FAQAT rasmiy Bot API (grammY) orqali ishlaydi. Hech qachon GramJS userbotidan (shaxsiy akkauntdan) guruhlarga a'zo qo'shish, spam yoki outreach uchun foydalanmang — bu Telegram akkauntingizning bloklanishiga olib keladi! Shuningdek, soxta (nakrutka) a'zolarni sotib olmang.
+
+### 1. Talablar (Bot huquqlari)
+Lead magnet tekshiruvi va materiallarni kanalga e'lon qilish uchun:
+- Bot kanalda **ADMIN** bo'lishi shart;
+- Botga **"Post Messages"** huquqi berilishi kerak.
+
+---
+
+### 2. Lead Magnit (Lead Magnet Gate)
+Foydali qo'llanma, checklist yoki cheat sheet orqali yangi obunachilarni jalb qilish:
+
+- `/magnit <mavzu>` — egasining buyrug'i bilan AI o'zbek tilida (lotin yozuvida, Telegram HTML formatida, maksimal ~3500 belgi) amaliy va sifatli lead magnit yozadi. Faktlar Google Search grounding orqali tekshiriladi.
+- Bot egasiga qoralama ko'rinishida yuboriladi: **"✅ Saqlash va e'lon qilish"** hamda **"🔄 Qayta yozish"** tugmalari mavjud.
+- Tasdiqlanganda lead magnit bazaga saqlanadi va kanal uchun qisqa qiziqtiruvchi anons (teaser) posti qoralanadi. Anonsda botning deep linki bo'ladi: `https://t.me/<bot_username>?start=m<id>`.
+- **Foydalanuvchi ochganda:**
+  - Agar foydalanuvchi kanalga a'zo bo'lsa — material darhol beriladi va ko'rishlar soni oshadi.
+  - Agar obuna bo'lmagan bo'lsa — unga kanal havolasi va **"✅ Tekshirish"** tugmasi ko'rsatiladi. Obuna bo'lgandan so'ng material taqdim etiladi.
+- `/magnitlar` — yaratilgan lead magnitlar ro'yxati va ularning ko'rishlar soni.
+
+---
+
+### 3. Tarqatish paketi (Growth Pack)
+- Har bir post kanalga muvaffaqiyatli e'lon qilingandan so'ng (`GROWTH_PACK=true`), AI fon rejimida post matni asosida ko'p platformali tarqatish paketini yaratadi va egasining shaxsiy chatiga yuboradi:
+  - **LinkedIn post:** 100–150 so'z, samimiy birinchi shaxs ohangida, kanal havolasi bilan yakunlanadi.
+  - **Video ssenariy:** 30–40 soniyalik Reels/Shorts/TikTok uchun (2 soniyalik hook, 3 ta qisqa fikr, kanalga chorlov).
+  - **3 ta Muqobil Hook:** diqqatni tortuvchi boshlang'ich sarlavhalar.
+  - **Karusel slaydlari:** 4–6 ta qisqa slayd matnlari.
+  - **Hashtaglar:** mavzuga mos teglar.
+
+---
+
+### 4. Avtomatik Promo qatorlari (Promo Lines)
+- Har `PROMO_EVERY` (standart 3)-chi postga avtomatik tarzda:
+  - Agar yaqinda yaratilgan lead magnit mavjud bo'lsa: unga yo'naltiruvchi havola (`start=m<id>`) post oxiriga nozik tarzda qo'shiladi.
+- Post tizim ko'rsatmasida (system prompt) o'quvchilarga "obuna bo'ling" deyish qat'iyan taqiqlangan (chunki ular allaqachon obunachi); uning o'rniga "Buni do'stlaringiz bilan ulashing" kabi samimiy forward/ulashish so'rovi generatsiya qilinadi.
+
+---
+
 ## `.env` sozlamalari
 
 | Kalit | Tavsif | Standart |
@@ -269,8 +357,17 @@ Agar tahlil davrida hech qanday muhim narsa topilmasa, bot shunchaki `Yangi muhi
 | `EXCLUDE_CHATS` | Tahlilga kiritilmaydigan chatlar (vergul bilan) | — |
 | `MAX_DIALOGS` | Tahlil qilinadigan maksimal dialoglar | `80` |
 | `USER_INTERESTS` | Kanal/guruhlardan ajratiladigan qiziqishlar | IT yo'nalishlari |
+| `GROWTH_PACK` | Har bir postdan so'ng tarqatish paketini yaratish | `true` |
+| `GROWTH_LANG` | Tarqatish paketi tili (`uz` yoki `en`) | `uz` |
+| `PROMO_EVERY` | Nechanchi postga promo qatori qo'shilishi | `3` |
 | `SOURCE_CHATS` | Blog uchun ommaviy kanallar (vergul bilan) | — |
 | `RSS_FEEDS` | Qo'shimcha RSS manzillar | — |
+| `TOPIC_WEIGHTS` | Mavzular nisbati va vaznlari | `it:50,karyera:15,imkoniyatlar:15,oqish:10,fan:10` |
+| `ENABLE_TOPICS` | Nofaol mavzularni yoqish (masalan: `pul`) | — |
+| `RSS_FEEDS_KARYERA` | Karyera kategoriyasi uchun maxsus RSS tasmalari | — |
+| `RSS_FEEDS_IMKONIYATLAR` | Imkoniyatlar kategoriyasi uchun maxsus RSS | — |
+| `RSS_FEEDS_OQISH` | O'qish kategoriyasi uchun maxsus RSS | — |
+| `RSS_FEEDS_FAN` | Ilm-fan kategoriyasi uchun maxsus RSS | — |
 | `LOOKBACK_DAYS` | Blog uchun necha kunlik xabarlar | `3` |
 | `TIMEZONE` | Vaqt mintaqasi | `Asia/Tashkent` |
 | `MAX_REWRITES` | Bitta qoralama uchun maksimal qayta yozish | `5` |
