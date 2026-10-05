@@ -10,6 +10,8 @@ import { InlineKeyboard } from 'grammy';
 
 /** Guard: prevent overlapping pipeline runs */
 let _running = false;
+let _lastRunTime = 0;
+const MANUAL_COOLDOWN_MS = 25 * 1000; // 25 soniyalik cooldown
 
 /**
  * The main pipeline. Collects material, generates a post, stores the draft,
@@ -31,7 +33,20 @@ export async function runPipeline(reason, opts = {}) {
 
   if (_running) {
     console.warn('[pipeline] Already running — skipping duplicate trigger.');
-    await notifyOwner(`⚠️ Pipeline allaqachon ishlamoqda, so'rov o'tkazib yuborildi.`);
+    await notifyOwner(
+      '⏳ <b>Post yaratish jarayoni allaqachon ketmoqda!</b>\n\n' +
+        'AI yangiliklarni yig\'ib, qoralama tayyorlamoqda. Iltimos, biroz kuting.'
+    );
+    return;
+  }
+
+  // Ketma-ket tez bosilganda cooldown
+  if (reason === 'manual' && Date.now() - _lastRunTime < MANUAL_COOLDOWN_MS) {
+    const remainSec = Math.ceil((MANUAL_COOLDOWN_MS - (Date.now() - _lastRunTime)) / 1000);
+    await notifyOwner(
+      `⏳ <b>Iltimos, biroz kuting!</b>\n\n` +
+        `Yangi post yaqinda yaratildi. Gemini API cheklovlariga (503/429) tushmaslik uchun keyingi so'rovni <b>${remainSec} soniyadan</b> keyin yuborishingiz mumkin.`
+    );
     return;
   }
 
@@ -133,9 +148,27 @@ export async function runPipeline(reason, opts = {}) {
     }
   } catch (err) {
     console.error('[pipeline] Fatal error:', err.message ?? err, err.stack ?? '');
-    await notifyOwner(`❌ Pipeline xatosi (${reason}):\n${err.message ?? err}`);
+    const msg = String(err.message ?? err);
+
+    if (
+      msg.includes('503') ||
+      msg.includes('high demand') ||
+      msg.includes('UNAVAILABLE') ||
+      msg.includes('429') ||
+      msg.includes('RESOURCE_EXHAUSTED') ||
+      msg.includes('rate limit')
+    ) {
+      await notifyOwner(
+        '⏳ <b>Sun\'iy intellekt (Gemini) ayni daqiqada band!</b>\n\n' +
+          'Ketma-ket so\'rovlar yoki Google serverlaridagi yuqori yuklama sababli post yaratish vaqtincha to\'xtatildi.\n\n' +
+          '💡 <i>Iltimos, 1-2 daqiqa kuting va qaytadan urinib ko\'ring.</i>'
+      );
+    } else {
+      await notifyOwner(`❌ <b>Pipeline xatosi (${reason}):</b>\n<code>${msg.slice(0, 300)}</code>`);
+    }
   } finally {
     _running = false;
+    _lastRunTime = Date.now();
   }
 }
 

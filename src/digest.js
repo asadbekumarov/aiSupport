@@ -89,25 +89,37 @@ function splitIntoMessages(header, sections, maxLen = 3900) {
   return messages;
 }
 
+let _runningStartTime = 0;
+
 /**
  * Execute the Personal Digest pipeline.
  *
  * @param {string} reason – "cron" | "manual"
  */
-export async function runDigest(reason = 'manual') {
+export async function runDigest(reason = 'manual', opts = {}) {
+  const scope = opts.scope ?? 'all';
+
+  // If running for more than 3 minutes, assume previous execution hung and reset lock
+  if (_running && Date.now() - _runningStartTime > 180000) {
+    console.warn('[digest] Lock timeout exceeded (3 min) — resetting _running lock.');
+    _running = false;
+  }
+
   if (_running) {
-    console.warn(`[digest] Already running — skipping duplicate trigger (${reason}).`);
+    console.warn(`[digest] Already running — skipping duplicate trigger (${reason}, scope: ${scope}).`);
     try {
       await bot.api.sendMessage(
         config.MY_CHAT_ID,
-        `⚠️ Dayjest allaqachon hisoblanmoqda, iltimos kuting.`
+        `⏳ <b>Dayjest allaqachon hisoblanmoqda!</b>\nIltimos, ozgina kuting, hisobot tayyorlanmoqda…`,
+        { parse_mode: 'HTML' }
       );
     } catch {}
     return;
   }
 
   _running = true;
-  console.log(`[digest] Starting Personal Digest pipeline (reason: ${reason})…`);
+  _runningStartTime = Date.now();
+  console.log(`[digest] Starting Personal Digest pipeline (reason: ${reason}, scope: ${scope})…`);
 
   try {
     const runStartTime = Math.floor(Date.now() / 1000);
@@ -129,14 +141,24 @@ export async function runDigest(reason = 'manual') {
       })} (sinceUnix: ${sinceUnix})`
     );
 
-    // Collect material from UserBot
-    const { material, lookup } = await collectDigestMaterial(sinceUnix);
+    // Collect material from UserBot according to scope
+    const { material, lookup } = await collectDigestMaterial(sinceUnix, scope);
 
     if (!material || material.length === 0) {
       console.log('[digest] No active messages found in lookback window.');
-      await bot.api.sendMessage(config.MY_CHAT_ID, 'Yangi muhim narsa yo\'q ✅');
+      await bot.api.sendMessage(config.MY_CHAT_ID, 'Yangi muhim xabarlar topilmadi ✅');
       setKv('lastDigestTime', String(runStartTime));
       return;
+    }
+
+    if (reason === 'manual') {
+      try {
+        await bot.api.sendMessage(
+          config.MY_CHAT_ID,
+          `🤖 <i>${material.length} ta chatdan yangi xabarlar olindi. AI hisobotni shakllantirmoqda…</i>`,
+          { parse_mode: 'HTML' }
+        );
+      } catch {}
     }
 
     // Separate material into public (channels & groups) and private (user chats)
@@ -149,16 +171,23 @@ export async function runDigest(reason = 'manual') {
       `[digest] Material partitioned: ${publicMaterial.length} public chat(s), ${privateMaterial.length} private chat(s).`
     );
 
-    // Run Call A (Public) and Call B (Private) isolated
+    // Run only necessary calls depending on scope
+    const needPublic = scope === 'all' || scope === 'channels' || scope === 'groups';
+    const needPrivate = scope === 'all' || scope === 'users';
+
     const [publicResult, privateResult] = await Promise.all([
-      analyzePublicChats(publicMaterial, lookup).catch((err) => {
-        console.error('[digest] Call A (Public) error:', err.message ?? err);
-        return { chats: [], for_me: [], trends: [] };
-      }),
-      analyzePrivateChats(privateMaterial, lookup).catch((err) => {
-        console.error('[digest] Call B (Private) error:', err.message ?? err);
-        return { important: [], suspicious: [], need_reply: [] };
-      }),
+      needPublic && publicMaterial.length > 0
+        ? analyzePublicChats(publicMaterial, lookup).catch((err) => {
+            console.error('[digest] Call A (Public) error:', err.message ?? err);
+            return { chats: [], for_me: [], trends: [] };
+          })
+        : Promise.resolve({ chats: [], for_me: [], trends: [] }),
+      needPrivate && privateMaterial.length > 0
+        ? analyzePrivateChats(privateMaterial, lookup).catch((err) => {
+            console.error('[digest] Call B (Private) error:', err.message ?? err);
+            return { important: [], suspicious: [], need_reply: [] };
+          })
+        : Promise.resolve({ important: [], suspicious: [], need_reply: [] }),
     ]);
 
     const hasConversations = privateResult.conversations?.length > 0;
@@ -349,8 +378,13 @@ export async function runDigest(reason = 'manual') {
       sectionBlocks.push(lines.join('\n').trim());
     }
 
+    let scopeTitle = '📋 <b>Shaxsiy Telegram Dayjest</b>';
+    if (scope === 'users') scopeTitle = '👤 <b>Shaxsiy Yozishmalar (Userlar) Dayjesti</b>';
+    else if (scope === 'groups') scopeTitle = '👥 <b>Guruhlar bo\'yicha Dayjest</b>';
+    else if (scope === 'channels') scopeTitle = '📢 <b>Kanallar bo\'yicha Dayjest</b>';
+
     const header =
-      `📋 <b>Shaxsiy Telegram Dayjest</b>\n` +
+      `${scopeTitle}\n` +
       `<i>${new Date().toLocaleString('uz-UZ', { timeZone: config.TIMEZONE })}</i>\n` +
       `──────────────────`;
 
@@ -378,11 +412,25 @@ export async function runDigest(reason = 'manual') {
     console.log(`[digest] Personal Digest finished successfully. lastDigestTime=${runStartTime}`);
   } catch (err) {
     console.error('[digest] Fatal error in runDigest:', err.message ?? err, err.stack ?? '');
+    const msg = String(err.message ?? err);
+
+    let friendly = `❌ <b>Dayjest tayyorlashda xatolik yuz berdi:</b>\n<code>${msg.slice(0, 300)}</code>`;
+    if (
+      msg.includes('503') ||
+      msg.includes('high demand') ||
+      msg.includes('UNAVAILABLE') ||
+      msg.includes('429') ||
+      msg.includes('RESOURCE_EXHAUSTED') ||
+      msg.includes('rate limit')
+    ) {
+      friendly =
+        '⏳ <b>Sun\'iy intellekt (Gemini) ayni paytda band!</b>\n\n' +
+        'Dayjest uchun so\'rovlar ko\'p bo\'lgani sababli Google serveri vaqtinchalik yuklamaga tushdi.\n\n' +
+        '💡 <i>Iltimos, 1-2 daqiqa kuting va qaytadan /digest buyrug\'ini yuboring.</i>';
+    }
+
     try {
-      await bot.api.sendMessage(
-        config.MY_CHAT_ID,
-        `❌ Dayjest tayyorlashda xatolik yuz berdi:\n${err.message ?? err}`
-      );
+      await bot.api.sendMessage(config.MY_CHAT_ID, friendly, { parse_mode: 'HTML' });
     } catch {}
   } finally {
     _running = false;

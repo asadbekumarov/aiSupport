@@ -7,13 +7,16 @@ import { config } from './config.js';
 const ai = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY });
 
 const candidateModels = [
+  config.GEMINI_MODEL,
+  'gemini-3.7-flash',
   'gemini-3.8-flash',
   'gemini-3.5-flash',
-  'gemini-flash-latest',
-  config.GEMINI_MODEL,
+  'gemini-3.5-flash-lite',
 ].filter(
   (m, i, arr) =>
     arr.indexOf(m) === i &&
+    Boolean(m) &&
+    m !== 'gemini-flash-latest' &&
     m !== 'gemini-2.5-flash' &&
     m !== 'gemini-2.0-flash' &&
     m !== 'gemini-1.5-flash'

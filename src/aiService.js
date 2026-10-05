@@ -172,30 +172,49 @@ export async function generatePost({
 
   const candidateModels = [
     model,
-    'gemini-flash-latest',
+    'gemini-3.7-flash',
     'gemini-3.8-flash',
     'gemini-3.5-flash',
-  ].filter((m, i, arr) => arr.indexOf(m) === i);
+    'gemini-3.5-flash-lite',
+  ].filter((m, i, arr) => arr.indexOf(m) === i && Boolean(m) && m !== 'gemini-flash-latest');
 
   async function callModel(contents) {
     let lastError = null;
     for (const m of candidateModels) {
-      try {
-        const res = await ai.models.generateContent({
-          model: m,
-          contents,
-          config: {
-            temperature: 0.9,
-            systemInstruction: SYSTEM_PROMPT,
-          },
-        });
-        if (res.text) return res;
-      } catch (err) {
-        console.warn(`[aiService] Model "${m}" failed: ${err.message ?? err}. Trying next model…`);
-        lastError = err;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const res = await ai.models.generateContent({
+            model: m,
+            contents,
+            config: {
+              temperature: 0.9,
+              systemInstruction: SYSTEM_PROMPT,
+            },
+          });
+          if (res.text) return res;
+        } catch (err) {
+          lastError = err;
+          const msg = err.message || '';
+          const isTransient =
+            err.status === 503 ||
+            msg.includes('503') ||
+            msg.includes('high demand') ||
+            msg.includes('UNAVAILABLE') ||
+            err.status === 429;
+
+          if (isTransient && attempt < 2) {
+            const delay = (attempt + 1) * 2000;
+            console.warn(`[aiService] Model "${m}" vaqtincha band, ${delay}ms kutilmoqda (urinish ${attempt + 1}/3)…`);
+            await new Promise((r) => setTimeout(r, delay));
+            continue;
+          }
+
+          console.warn(`[aiService] Model "${m}" javob bermadi: ${msg.slice(0, 100)}. Keyingi modelga o'tilmoqda…`);
+          break;
+        }
       }
     }
-    throw lastError ?? new Error('[aiService] All candidate models failed');
+    throw lastError ?? new Error('[aiService] Barcha Gemini modellari javob bera olmadi');
   }
 
   console.log(`[aiService] Generating post with model "${model}"…`);

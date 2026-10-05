@@ -53,15 +53,24 @@ function draftKeyboard(draftId) {
 }
 
 /**
- * Send a plain text notification to the owner.
+ * Send an HTML notification to the owner.
  * Never throws – errors are logged.
  * @param {string} text
+ * @param {object} [options]
  */
-export async function notifyOwner(text) {
+export async function notifyOwner(text, options = {}) {
   try {
-    await bot.api.sendMessage(config.MY_CHAT_ID, text);
+    await bot.api.sendMessage(config.MY_CHAT_ID, text, {
+      parse_mode: 'HTML',
+      link_preview_options: { is_disabled: true },
+      ...options,
+    });
   } catch (err) {
-    console.error('[bot] notifyOwner failed:', err.message ?? err);
+    try {
+      await bot.api.sendMessage(config.MY_CHAT_ID, text.replace(/<[^>]+>/g, ''), options);
+    } catch (fallbackErr) {
+      console.error('[bot] notifyOwner failed:', fallbackErr.message ?? fallbackErr);
+    }
   }
 }
 
@@ -116,6 +125,13 @@ bot.use(async (ctx, next) => {
   await next();
 });
 
+// ─── Global Error Handler (Prevents crashes on expired queries) ───────────
+
+bot.catch((err) => {
+  const ctx = err.ctx;
+  console.error(`[bot] Error handling update ${ctx?.update?.update_id}:`, err.error?.message ?? err.error ?? err);
+});
+
 // ─── Callback query: approve ───────────────────────────────────────────────
 
 bot.callbackQuery(/^ok:(\d+)$/, async (ctx) => {
@@ -123,15 +139,15 @@ bot.callbackQuery(/^ok:(\d+)$/, async (ctx) => {
   const draft = getDraft(draftId);
 
   if (!draft) {
-    await ctx.answerCallbackQuery({ text: 'Draft topilmadi.' });
+    await ctx.answerCallbackQuery({ text: 'Draft topilmadi.' }).catch(() => {});
     return;
   }
   if (draft.status === 'published') {
-    await ctx.answerCallbackQuery({ text: `Bu draft allaqachon e'lon qilingan.` });
+    await ctx.answerCallbackQuery({ text: `Bu draft allaqachon e'lon qilingan.` }).catch(() => {});
     return;
   }
 
-  await ctx.answerCallbackQuery({ text: `📤 E'lon qilinmoqda…` });
+  await ctx.answerCallbackQuery({ text: `📤 E'lon qilinmoqda…` }).catch(() => {});
 
   try {
     const sent = await bot.api.sendMessage(config.CHANNEL_USERNAME, draft.text, {
@@ -147,7 +163,7 @@ bot.callbackQuery(/^ok:(\d+)$/, async (ctx) => {
     });
 
     // Remove buttons from the owner's message
-    await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
+    await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() }).catch(() => {});
 
     // Notify the owner with a link to the published post
     const postLink = `https://t.me/${config.CHANNEL_USERNAME.replace('@', '')}/${sent.message_id}`;
@@ -169,7 +185,7 @@ bot.callbackQuery(/^ok:(\d+)$/, async (ctx) => {
         const sent = await bot.api.sendMessage(config.CHANNEL_USERNAME, plain);
         markDraftPublished(draftId);
         addPost({ topic: draft.topic, text: plain, channel_message_id: sent.message_id });
-        await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() });
+        await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard() }).catch(() => {});
         const postLink = `https://t.me/${config.CHANNEL_USERNAME.replace('@', '')}/${sent.message_id}`;
         await ctx.reply(`✅ Post oddiy matn sifatida e'lon qilindi!\n${postLink}`);
         return;
@@ -186,7 +202,7 @@ bot.callbackQuery(/^ok:(\d+)$/, async (ctx) => {
 
 bot.callbackQuery(/^rw:(\d+)$/, async (ctx) => {
   const draftId = Number(ctx.match[1]);
-  await ctx.answerCallbackQuery({ text: '✍️ Qayta yozilmoqda…' });
+  await ctx.answerCallbackQuery({ text: '✍️ Qayta yozilmoqda…' }).catch(() => {});
   await _doRewrite(ctx, draftId, null);
 });
 
@@ -239,7 +255,6 @@ async function handleGenerate(ctx) {
   // Run without awaiting so the command returns immediately
   _generateHandler('manual').catch((err) => {
     console.error('[bot] Manual generate error:', err.message ?? err);
-    ctx.reply(`❌ Xatolik yuz berdi: ${err.message}`).catch(() => {});
   });
 }
 
@@ -270,20 +285,52 @@ async function handleStatus(ctx) {
   });
 }
 
+export const digestScopeKeyboard = new InlineKeyboard()
+  .text('👥 Guruhlar', 'digest:groups')
+  .text('📢 Kanallar', 'digest:channels')
+  .row()
+  .text('👤 Userlar (Shaxsiy)', 'digest:users')
+  .text('🌐 Hammasi', 'digest:all');
+
 async function handleDigest(ctx) {
   if (!_digestHandler) {
     await ctx.reply('⚠️ Shaxsiy Dayjest generatori hali tayyor emas.');
     return;
   }
   await ctx.reply(
-    '📋 Shaxsiy hisobot tayyorlanmoqda… Kanallar, guruhlar va shaxsiy chatlar tahlil qilinmoqda, biroz kuting!',
-    { reply_markup: mainKeyboard }
+    '📋 <b>Qaysi bo\'lim bo\'yicha hisobot olmoqchisiz?</b>\n\n' +
+      'Quyidagi tugmalardan birini tanlang:\n\n' +
+      '• 👥 <b>Guruhlar</b> — Faqat guruhlardagi muhokamalar va muhim mavzular\n' +
+      '• 📢 <b>Kanallar</b> — Kanallardagi yangiliklar va trendlar\n' +
+      '• 👤 <b>Userlar</b> — Shaxsiy chatlar (javob kutilayotgan/muhim xabarlar)\n' +
+      '• 🌐 <b>Hammasi</b> — Barcha chatlar bo\'yicha to\'liq hisobot',
+    {
+      parse_mode: 'HTML',
+      reply_markup: digestScopeKeyboard,
+    }
   );
-  _digestHandler('manual').catch((err) => {
-    console.error('[bot] Manual digest error:', err.message ?? err);
-    ctx.reply(`❌ Dayjestda xatolik yuz berdi: ${err.message}`).catch(() => {});
-  });
 }
+
+// ─── Callback query: digest scope selection ───────────────────────────────
+
+bot.callbackQuery(/^digest:(groups|channels|users|all)$/, async (ctx) => {
+  const scope = ctx.match[1];
+  await ctx.answerCallbackQuery().catch(() => {});
+
+  let scopeLabel = 'Barcha chatlar';
+  if (scope === 'groups') scopeLabel = '👥 Guruhlar';
+  else if (scope === 'channels') scopeLabel = '📢 Kanallar';
+  else if (scope === 'users') scopeLabel = '👤 Shaxsiy yozishmalar (Userlar)';
+
+  await ctx.reply(
+    `⏳ <b>${scopeLabel}</b> bo'yicha ma'lumotlar tahlil qilinmoqda… Biroz kuting!`,
+    { parse_mode: 'HTML' }
+  );
+
+  _digestHandler('manual', { scope }).catch((err) => {
+    console.error(`[bot] Manual digest error (${scope}):`, err.message ?? err);
+  });
+});
 
 async function handleDigestStatus(ctx) {
   const lastTimeStr = getKv('lastDigestTime');

@@ -114,7 +114,7 @@ export async function fetchRecentMessages() {
  *   }
  * }>}
  */
-export async function collectDigestMaterial(sinceUnix) {
+export async function collectDigestMaterial(sinceUnix, scope = 'all') {
   const client = await getClient();
 
   let me = null;
@@ -188,22 +188,31 @@ export async function collectDigestMaterial(sinceUnix) {
     qualifying.push({ dialog: d, type, date: dialogDate });
   }
 
-  // Guarantee that ALL active private chats (up to 40) are included so they are never crowded
-  // out by high-frequency broadcast channels. Then groups (up to 25), then channels fill remainder.
+  // Filter dialogs according to scope (users, groups, channels, all)
   const privateChats = qualifying.filter((q) => q.type === 'private').sort((a, b) => b.date - a.date);
   const groupChats = qualifying.filter((q) => q.type === 'group').sort((a, b) => b.date - a.date);
   const channelChats = qualifying.filter((q) => q.type === 'channel').sort((a, b) => b.date - a.date);
 
-  const selectedPrivate = privateChats.slice(0, 40);
-  const selectedGroups = groupChats.slice(0, 25);
-  const remainingSlots = Math.max(0, config.MAX_DIALOGS - selectedPrivate.length - selectedGroups.length);
-  const selectedChannels = channelChats.slice(0, remainingSlots);
-
-  const selected = [...selectedPrivate, ...selectedGroups, ...selectedChannels];
+  let selected = [];
+  if (scope === 'users') {
+    selected = privateChats.slice(0, 30);
+  } else if (scope === 'groups') {
+    selected = groupChats.slice(0, 20);
+  } else if (scope === 'channels') {
+    selected = channelChats.slice(0, 15);
+  } else {
+    // all
+    const selectedPrivate = privateChats.slice(0, 25);
+    const selectedGroups = groupChats.slice(0, 15);
+    const selectedChannels = channelChats.slice(0, 10);
+    selected = [...selectedPrivate, ...selectedGroups, ...selectedChannels];
+  }
 
   console.log(
-    `[userbot] Selected ${selected.length} dialog(s) for digest: ` +
-      `${selectedPrivate.length} private, ${selectedGroups.length} groups, ${selectedChannels.length} channels.`
+    `[userbot] Selected ${selected.length} dialog(s) for digest (scope: ${scope}): ` +
+      `${selected.filter((s) => s.type === 'private').length} private, ` +
+      `${selected.filter((s) => s.type === 'group').length} groups, ` +
+      `${selected.filter((s) => s.type === 'channel').length} channels.`
   );
 
   const chatLookup = new Map();
@@ -214,10 +223,9 @@ export async function collectDigestMaterial(sinceUnix) {
   let gCounter = 0;
   let sCounter = 0;
 
+  // Pre-assign labels and populate chatLookup
   for (const item of selected) {
     const { dialog, type } = item;
-
-    // Label generation
     let label = '';
     if (type === 'channel') {
       kCounter++;
@@ -229,6 +237,7 @@ export async function collectDigestMaterial(sinceUnix) {
       sCounter++;
       label = `S${sCounter}`;
     }
+    item.label = label;
 
     const title = dialog.name || dialog.title || 'Noma\'lum';
     const username = dialog.entity?.username || null;
@@ -253,9 +262,14 @@ export async function collectDigestMaterial(sinceUnix) {
       type,
       date: dialog.date,
     });
+  }
 
-    const maxMessages = type === 'channel' ? 20 : type === 'group' ? 30 : 40;
+  async function fetchDialogMessages(item) {
+    const { dialog, type, label } = item;
+    const maxMessages = type === 'channel' ? 15 : type === 'group' ? 25 : 35;
     const isPrivate = type === 'private';
+    const cleanId = String(dialog.id ?? '').replace(/^-100/, '').replace(/^-/, '');
+    const username = dialog.entity?.username || null;
 
     try {
       const chatMessages = [];
@@ -270,8 +284,6 @@ export async function collectDigestMaterial(sinceUnix) {
         const rawText = msg.message ?? '';
         if (!rawText || !rawText.trim()) continue;
 
-        // In private chats, keep all real conversational messages (even short ones like 'ha', 'keldim', 'qachon')
-        // In channels and groups, skip short spam
         if (isPrivate) {
           if (rawText.trim().length < 2) continue;
         } else {
@@ -320,27 +332,19 @@ export async function collectDigestMaterial(sinceUnix) {
           messages: chatMessages,
         });
       }
-
-      console.log(`[userbot] Digest dialog ${label} (${type}): collected ${chatMessages.length} message(s).`);
     } catch (err) {
-      let waitSeconds = err.seconds;
-      if (!waitSeconds && err.message) {
-        const m =
-          err.message.match(/FLOOD_WAIT_(\d+)/i) ||
-          err.message.match(/wait of (\d+) seconds/i);
-        if (m) waitSeconds = Number(m[1]);
-      }
-
-      if (waitSeconds && waitSeconds <= 30) {
-        console.warn(`[userbot] FLOOD_WAIT ${waitSeconds}s on ${label}. Waiting…`);
-        await new Promise((r) => setTimeout(r, (waitSeconds + 1) * 1000));
-      } else {
-        console.warn(`[userbot] Error reading ${label}: ${err.message ?? err}`);
-      }
+      console.warn(`[userbot] Error reading ${label}: ${err.message ?? err}`);
     }
+  }
 
-    // Gentle delay between dialogs to prevent flooding
-    await new Promise((r) => setTimeout(r, 300));
+  // Fetch in concurrent batches of 4 for 4x speedup
+  const BATCH_SIZE = 4;
+  for (let i = 0; i < selected.length; i += BATCH_SIZE) {
+    const batch = selected.slice(i, i + BATCH_SIZE);
+    await Promise.all(batch.map((it) => fetchDialogMessages(it)));
+    if (i + BATCH_SIZE < selected.length) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
   }
 
   return {
