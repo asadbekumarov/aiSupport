@@ -6,9 +6,13 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 
-# Channel export files (may contain personal data)
+# Channel export, style, and voice files (may contain personal data)
 data/exports/*
 !data/exports/.gitkeep
+data/style/*
+!data/style/.gitkeep
+data/voice/*
+!data/voice/README.txt
 data/images/*
 !data/images/.gitkeep
 

@@ -24,8 +24,21 @@ import { runDigest } from './src/digest.js';
 import { startScheduler } from './src/scheduler.js';
 import { bot, setGenerateHandler, setDigestHandler, notifyOwner } from './src/bot.js';
 import { getActiveCategoriesSummary } from './src/topics.js';
+import { getStyleCounts } from './src/styleSources.js';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 
 console.log(`[index] Active blog categories: ${getActiveCategoriesSummary()}`);
+
+// ── Startup style & humanizer engine status ─────────────────────────────────
+const styleCounts = getStyleCounts();
+const guideExists = existsSync(join(config.STYLE_DIR, 'guide.json'));
+console.log(
+  `[index] Style samples: ${styleCounts.brandExports} export(s), ${styleCounts.brandLive} live channel post(s), ${styleCounts.voice} voice text(s) (total: ${styleCounts.total}).`
+);
+console.log(
+  `[index] Style guide: ${guideExists ? 'cached ✅' : 'not yet generated (will build on first run) ⏳'} | Lint threshold: ${config.LINT_MIN_SCORE} | Humanize level: ${config.HUMANIZE_LEVEL}`
+);
 
 // ── 3. Wire the handlers (breaks circular imports) ─────────────────────────
 setGenerateHandler(runPipeline);
@@ -73,6 +86,9 @@ async function runBotLoop() {
               { command: 'write', description: 'Maxsus mavzu yoki havola bo\'yicha post yozish' },
               { command: 'generate', description: 'Yangiliklardan avtomatik post yaratish' },
               { command: 'topics', description: 'Mavzular vaznlari va statistikasi' },
+              { command: 'fikr', description: 'Egasining shaxsiy fikri/tajribasini saqlash' },
+              { command: 'uslub', description: 'Kanal uslub profili va ko\'rsatkichlari' },
+              { command: 'uslub_yangila', description: 'Uslub tahlili va qo\'llanmasini yangilash' },
               { command: 'digest', description: 'Shaxsiy dayjest hisobotini olish' },
               { command: 'digest_status', description: 'Dayjest holati va sozlamalari' },
               { command: 'status', description: 'Blog statistikasi va holat' },

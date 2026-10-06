@@ -124,6 +124,10 @@ const stmts = {
     SELECT topic FROM posts ORDER BY published_at DESC LIMIT ?
   `),
 
+  recentPostTexts: db.prepare(`
+    SELECT text FROM posts ORDER BY published_at DESC LIMIT ?
+  `),
+
   lastPublishedCategories: db.prepare(`
     SELECT COALESCE(category, 'it') AS category FROM posts ORDER BY published_at DESC LIMIT ?
   `),
@@ -237,6 +241,11 @@ export function getRecentTopics(n = 15) {
   return stmts.recentTopics.all(n).map((r) => r.topic);
 }
 
+/** Return the texts of the last n published posts for copy checking. */
+export function getRecentPostTexts(n = 50) {
+  return stmts.recentPostTexts.all(n).map((r) => r.text);
+}
+
 /** Return the categories of the last n published posts (default 2). */
 export function getLastPublishedCategories(n = 2) {
   return stmts.lastPublishedCategories.all(n).map((r) => r.category);
@@ -266,6 +275,84 @@ export function getKv(key) {
 /** Store or update a key-value pair in the kv table. */
 export function setKv(key, value) {
   stmts.setKv.run(key, String(value));
+}
+
+// ─── Owner notes (authentic experience) ───────────────────────────────────
+
+/**
+ * Add a pending owner note to the kv table (max 5 pending notes).
+ * @param {string} text
+ * @returns {{ ok: boolean, error?: string, count?: number }}
+ */
+export function addOwnerNote(text) {
+  const trimmed = String(text ?? '').trim();
+  if (!trimmed) {
+    return { ok: false, error: "Fikr matni bo'sh bo'lishi mumkin emas." };
+  }
+
+  let list = [];
+  try {
+    const raw = getKv('owner_notes');
+    if (raw) list = JSON.parse(raw);
+  } catch {
+    list = [];
+  }
+
+  const pending = list.filter((n) => !n.used);
+  if (pending.length >= 5) {
+    return {
+      ok: false,
+      error: "Maksimal 5 ta kutilayotgan fikr saqlanishi mumkin. Yangi qo'shishdan oldin avvalgilari postlarda ishlatilishi kerak.",
+    };
+  }
+
+  list.push({
+    id: Date.now(),
+    text: trimmed,
+    created_at: new Date().toISOString(),
+    used: false,
+  });
+
+  setKv('owner_notes', JSON.stringify(list));
+  return { ok: true, count: pending.length + 1 };
+}
+
+/**
+ * Get all pending owner notes.
+ * @returns {Array<{ id: number, text: string, created_at: string, used: boolean }>}
+ */
+export function getPendingOwnerNotes() {
+  try {
+    const raw = getKv('owner_notes');
+    if (!raw) return [];
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? list.filter((n) => !n.used) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Weave one pending note: marks it as used and returns its text, or null if none pending.
+ * @returns {string|null}
+ */
+export function consumePendingOwnerNote() {
+  try {
+    const raw = getKv('owner_notes');
+    if (!raw) return null;
+    const list = JSON.parse(raw);
+    if (!Array.isArray(list)) return null;
+
+    const target = list.find((n) => !n.used);
+    if (!target) return null;
+
+    target.used = true;
+    target.used_at = new Date().toISOString();
+    setKv('owner_notes', JSON.stringify(list));
+    return target.text;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Lead magnet helpers ───────────────────────────────────────────────────

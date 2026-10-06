@@ -1,15 +1,14 @@
-// src/aiService.js – Gemini & Groq integration for post generation
+// src/aiService.js – Multi-pass generation pipeline: Draft → Edit → Lint → Judge
 import { GoogleGenAI } from '@google/genai';
 import { config } from './config.js';
-import { toTelegramHtml } from './format.js';
+import { toTelegramHtml, stripTags } from './format.js';
 import { HARD_EXCLUSIONS } from './topics.js';
+import { lintPost } from './humanLint.js';
+import { getStyleProfile } from './styleProfile.js';
 
 const ai = new GoogleGenAI({ apiKey: config.GEMINI_API_KEY });
 
 // ─── CTA ideas ─────────────────────────────────────────────────────────────
-// ─── CTA ideas ─────────────────────────────────────────────────────────────
-// Forward / share / discussion requests fitting the post.
-// NEVER ask readers to subscribe because they are already channel subscribers.
 const CTA_IDEAS = [
   "Buni ish qidirayotgan yoki loyihasi bor do'stingga yubor — foydasi tegishi aniq! 🤝",
   "Fikringni izohlarda yoz — birga muhokama qilamiz! 💬",
@@ -27,68 +26,81 @@ export function pickCta() {
 }
 
 // ─── System prompt builder ─────────────────────────────────────────────────
-export function buildSystemPrompt(category = { id: 'it', name: 'IT va Texnologiyalar', guidance: "IT yangiliklari, dasturlash, AI, vositalar, o'zbekistonlik dasturchi uchun foydasi." }) {
+export function buildSystemPrompt(category = { id: 'it', name: 'IT va Texnologiyalar' }, profile = {}) {
   const isIt = category.id === 'it';
+  const guide = profile?.guide || {};
+  const targetStats = profile?.targetStats || {};
 
-  let categoryBlock = `\nKanal asosan IT haqida, lekin ba'zan boshqa foydali mavzularda ham yozadi. Bugungi postning yo'nalishi: ${category.name}. ${category.guidance}. Maqsad o'zgarmaydi: o'zbek auditoriyasiga foydali post va do'stlarga ulashishga undovchi samimiy CTA.`;
+  let categoryBlock = `\nBugungi postning yo'nalishi: ${category.name}. ${category.guidance || ''}. Maqsad: o'zbek auditoriyasiga haqiqiy inson yozgan, jonli, o'qishli va foydali post taqdim etish.`;
 
   if (!isIt) {
-    categoryBlock += `\nUshbu postni umumiy o'zbek yoshlari auditoriyasi uchun (faqat dasturchilar uchun emas) moslashtirib, sodda va tushunarli tilda yoz. Barcha asosiy qoidalarga rioya qil: lotin yozuvi, 150–250 so'z, to'qima faktlarsiz, o'z so'zlaring bilan, sun'iy (AI) iboralardan xoli, faqat Telegram HTML teglari.`;
+    categoryBlock += `\nUshbu postni kengroq o'zbek auditoriyasi uchun moslashtirib, sodda, tushunarli va qiziqarli tilda yoz.`;
   }
 
   let specialRules = '';
   if (category.id === 'pul') {
     specialRules += `\n\nMOLIYAVIY SAVODXONLIK TALABI: Hech qachon investitsiya maslahati berma va daromad va'da qilma. Post oxirida albatta qisqa bitta jumla qo'sh: "Bu moliyaviy maslahat emas."`;
   } else if (category.id === 'imkoniyatlar') {
-    specialRules += `\n\nIMKONIYATLAR TALABI: Faqat tasdiqlangan, muddati (deadline) hali o'tmagan imkoniyat haqida yoz. Muddat va rasmiy havola postda albatta bo'lsin. Ishonchli havola yoki aniq muddat topilmasa, boshqa mavzu tanla va hech narsa to'qima.`;
+    specialRules += `\n\nIMKONIYATLAR TALABI: Faqat tasdiqlangan, muddati (deadline) hali o'tmagan imkoniyat haqida yoz. Muddat va rasmiy havola postda albatta bo'lsin.`;
   }
 
   const exclusions = HARD_EXCLUSIONS.join(', ');
 
-  return `Sen IT sohasidagi mutaxassissan. Maqsading — o'quvchilarga eng foydali va amaliy yangiliklarni ulashish. Har bir postda qiziqarli sarlavha, sodda o'zbek tilidagi tushuntirish va o'quvchilarni do'stlariga forward qilishga / ulashishga undaydigan tabiiy Call-to-Action (CTA) bo'lsin.
-${categoryBlock}${specialRules}
+  let guideHighlights = '';
+  if (guide.tone) {
+    guideHighlights += `\nKANALNING O'ZIGA XOS USLUBI:\n• Ohang: ${guide.tone}\n• Ritm: ${guide.sentence_rhythm || ''}`;
+    if (guide.vocabulary_and_connectors?.length) {
+      guideHighlights += `\n• Xarakterli so'z va bog'lovchilar: ${guide.vocabulary_and_connectors.slice(0, 5).join(', ')}`;
+    }
+  }
 
-QAT'IY TAQIQLANGAN MAVZULAR (HARD EXCLUSIONS):
-Har qanday kategoriya uchun quyidagi mavzular qat'iyan taqiqlanadi: ${exclusions}. Agar to'plangan material yoki qidiruv natijalari shu mavzularga olib kelsa, AI albatta boshqa mavzu tanlashi shart.
+  let statsGuidance = '';
+  if (targetStats.avgSentenceLength) {
+    statsGuidance = `\nMAQSADLI KO'RSATKICHLAR:\n• O'rtacha gap uzunligi: ~${targetStats.avgSentenceLength} so'z (xilma-xil og'ish: std dev ~${targetStats.sentenceStdDev || 4.5})\n• Emoji soni: ~${targetStats.emojisPerPost || 3} ta (har qator boshida EMOJI BO'LMASIN!)\n• Abzatslar: ~${targetStats.avgParagraphs || 4} ta`;
+  }
 
-QOIDALAR:
-1. Til: O'zbek tili, lotin yozuvi. Texnik atamalar inglizcha qolsin (framework, API, deploy, open source, bug, release va h.k.).
-2. Uzunlik: 150–250 so'z.
-3. Tuzilma:
-   • Bitta kuchli sarlavha (qalin, 1 emoji bilan boshlansin)
-   • Nima bo'ldi — qisqa, aniq
-   • Nima uchun muhim / Auditoriya uchun nima ma'no anglatadi
-   • CTA (bitta qisqa gap, samimiy forward/ulashish so'rovi)
-   • 2–3 hashtag
-4. QAT'IY QOIDA — OBUNA SO'RAMASLIK: Postda HECH QACHON "obuna bo'ling", "kanalga a'zo bo'ling" yoki "kanalda qoling" kabi iboralarni ishlatma (chunki o'quvchilar allaqachon kanal obunachisidir). CTA faqat post mazmuniga mos bitta aniq ulashish taklifi bo'lsin (masalan: "Buni ish qidirayotgan do'stingga yubor").
-5. Uslub: Jonli, do'stona, qisqa gaplar. AI yozgandek ko'rinmasin. Uslub namunalaridan faqat ohang, gap uzunligi, emoji ishlatish va tuzilmani ol — hech qachon gaplarni ko'chirma.
-6. Faktlar: Faqat berilgan materialdan yoki Google Search tasdiqlagan ma'lumotdan foydalan. O'zing ixtiro qilma.
-7. Manbalar: Agar ishonchli havola bo'lsa, oxirida bitta havolani HTML <a href> bilan qo'sh.
-8. Takrorlamaslik: "OLDIN CHIQQAN MAVZULAR" ro'yxatidagi mavzularni qayta ko'tarma.
-9. Em-tire (—) va shablonli iboralardan qoching.
-10. Standard emoji ishlatgin, maxsus/premium emoji yo'q.
-11. Maxsus mavzu: Agar "FOYDALANUVCHINING MAXSUS TOPSHIRIG'I / MAVZUSI" yoki "MAQOLA / MANBA MATNI" taqdim etilgan bo'lsa, postni to'liq va faqat shu mavzuga bag'ishlab yoz. Umumiy RSS va guruh xabarlariga chalg'ima.
+  return `Sen tajribali o'zbekistonlik IT mutaxassis va blog muallifisan. Yozgan posting hech qachon sun'iy intellekt (AI) yozgandek ko'rinmasligi, balki haqiqiy tirik insonning samimiy fikridek o'qilishi shart.
+${categoryBlock}${specialRules}${guideHighlights}${statsGuidance}
 
-JAVOB FORMATI (faqat shu, boshqa narsa yo'q):
+QAT'IY TAQIQLANGAN MAVZULAR: ${exclusions}.
+
+QAT'IY YOZISH QOIDALARI (INSONIY USLUB TALABLARI):
+1. Gap uzunligi keskin farq qilsin: qisqa gaplar (2-5 so'z) va uzunroqlar aralash kelsin; to'liq bo'lmagan gaplar ham mumkin.
+2. Aniq narsa yoz: nom, raqam, misol, vaziyat. Umumiy va mavhum gaplardan qoch.
+3. Bitta aniq fikr yoki baho bo'lsin (xolis, zerikarli "ikki tomonlama" rasmiy gaplar emas).
+4. TAQIQ: uzun tire (—, –), "Xulosa qilib aytganda", "Bugungi raqamli dunyoda", "Zamonaviy dunyoda", "Shuni ta'kidlash joizki", "muhim ahamiyatga ega", "nafaqat ... balki ...", "Keling, ...", "Ushbu", uchtalik ro'yxat qolipi (A, B va C), har qatorni emoji bilan boshlash, hamma gapni bir xil so'z bilan boshlash, tartibli "xulosa" abzatsi, "Sarlavha: izoh" qolipi.
+5. Rasmiy kitobiy so'zlar o'rniga sodda so'zlashuv so'zlari; texnik atamalar inglizcha qoladi (framework, deploy, backend, bug, release va h.k.).
+6. Oxiri yumshoq tugasin: "xulosa" yozma, fikr yoki savol bilan tugat (uslub profiliga qarab).
+7. SHAXSIY TAJRIBA QOIDASI: Uslub namunalari birinchi shaxs nomidan ("men") yozilgan bo'lsa ham, HECH QACHON o'zingdan shaxsiy tajriba, test, raqam yoki hikoyalar to'qima! Birinchi shaxs tajribasi FAQAT berilgan EGASINING FIKRI (OWNER_NOTES / /fikr) yoki OWNER_BIO da mavjud bo'lsagina ruxsat etiladi; aks holda mutlaqo xolis, neytral va informativ tilda aniq misollar bilan yoz.
+8. KITOB VA MANBALAR QOIDASI: Kitob sharhi yoki manbaga asoslangan postlarda, agar materialda kitob/maqola nomi va muallifi taqdim etilgan bo'lsa, ularni postda albatta aniq tilga olgin. Materialda berilmagan yoki mavjud bo'lmagan manbani esa aslo da'vo qilma / to'qima.
+9. OBUNA SO'RAMASLIK: "obuna bo'ling", "kanalga a'zo bo'ling" yoki "kanalda qoling" deb yozma.
+10. Faqat ruxsat etilgan Telegram HTML teglari: <b>, <i>, <code>, <a href="...">.
+11. Uzunlik: 150–250 so'z.
+
+JAVOB FORMATI:
 MAVZU: <qisqa mavzu sarlavhasi>
 ---
 <post HTML matni>`;
 }
 
 /**
- * Build the user-facing prompt with all collected data.
+ * Build user-facing prompt for Pass 1 (Draft generation).
  */
 function buildUserPrompt({
   category = { id: 'it', name: 'IT va Texnologiyalar' },
-  groupMessages,
-  rssItems,
-  styleSamples,
-  recentTopics,
-  cta,
-  previousDraft,
-  feedback,
-  customTopic,
-  customUrlContent,
+  groupMessages = [],
+  rssItems = [],
+  styleSamples = [],
+  recentTopics = [],
+  cta = '',
+  previousDraft = null,
+  feedback = null,
+  customTopic = null,
+  customUrlContent = null,
+  ownerNote = null,
+  ownerBio = '',
+  targetStats = {},
+  styleGuide = {},
 }) {
   const today = new Date().toLocaleDateString('uz-Latn-UZ', {
     weekday: 'long',
@@ -103,93 +115,135 @@ function buildUserPrompt({
   ];
 
   if (category.searchHint) {
-    lines.push(`🔍 Google Search / Qidiruv tavsiyasi: ${category.searchHint}`);
+    lines.push(`🔍 Qidiruv tavsiyasi: ${category.searchHint}`);
   }
   lines.push('');
 
-  // Group messages from Telegram chats
+  // Owner's authentic bio and opinion note
+  if (ownerBio) {
+    lines.push('── KANAL EGASI HAQIDA QISQA FAKTLAR (OWNER_BIO) ──────────');
+    lines.push(ownerBio);
+    lines.push('');
+  }
+
+  if (ownerNote) {
+    lines.push('── EGASINING HAQIQIY FIKRI / TAJRIBASI (OWNER_NOTE) ──────');
+    lines.push(`"${ownerNote}"`);
+    lines.push(
+      "DIQQAT: Ushbu fikrni/tajribani post ichiga tabiiy ravishda birinchi shaxs nomidan singdirib yoz. Boshqa to'qima tajriba qo'shma."
+    );
+    lines.push('');
+  } else {
+    lines.push('── EGASINING FIKRI: Yo\'q. Shaxsiy tajriba to\'qima! Xolis, aniq misollar bilan yoz.');
+    lines.push('');
+  }
+
+  // Group messages
   if (groupMessages?.length > 0) {
-    lines.push('── GURUH MUHOKAMALAR ──────────────────');
+    lines.push('── GURUH MUHOKAMALARI (manba) ──────────────────────────');
     for (const { chat, messages } of groupMessages) {
       lines.push(`\n[${chat}]`);
       messages.forEach((m, i) => lines.push(`${i + 1}. ${m}`));
     }
     lines.push('');
-  } else {
-    lines.push('── GURUH MUHOKAMALAR: mavjud emas (yoki boshqa kategoriya) ──\n');
   }
 
-  // RSS news items
+  // RSS items
   if (rssItems?.length > 0) {
-    lines.push('── RSS YANGILIKLAR ────────────────────');
+    lines.push('── RSS YANGILIKLAR (manba) ─────────────────────────────');
     rssItems.forEach(({ source, title, link, summary }, i) => {
       lines.push(`\n${i + 1}. [${source}] ${title}`);
       if (link) lines.push(`   🔗 ${link}`);
       if (summary) lines.push(`   ${summary}`);
     });
     lines.push('');
-  } else {
-    lines.push('── RSS YANGILIKLAR: mavjud emas (Google Search orqali qidiring) ──\n');
   }
 
-  // Style samples – tone/structure reference only
+  // Style samples – clearly labeled
   if (styleSamples?.length > 0) {
-    lines.push(`── USLUB NAMUNALARI (faqat ohang/tuzilma uchun, ko'chirma!) ──`);
-    styleSamples.forEach((s, i) => lines.push(`\n[${i + 1}]\n${s}`));
+    lines.push(`── USLUB NAMUNALARI (uslub namunasi (ko'chirma qilma)) ────`);
+    styleSamples.forEach((s, i) => {
+      const text = typeof s === 'string' ? s : s?.text || '';
+      const srcLabel = s?.source === 'voice' ? 'Shaxsiy muallif ovozi (Voice)' : 'Brand namunasi';
+      lines.push(`\n[${i + 1}] (${srcLabel})\n${text}`);
+    });
     lines.push('');
   }
 
-  // Recent topics to avoid duplicates (covers all categories)
+  // Style guide highlights & target stats
+  if (styleGuide?.tone || targetStats?.avgSentenceLength) {
+    lines.push('── USLUB VA STATISTIKA MAQSADI ─────────────────────────');
+    if (targetStats?.avgSentenceLength) {
+      lines.push(
+        `O'rtacha gap: ~${targetStats.avgSentenceLength} so'z; Std Dev: ~${targetStats.sentenceStdDev}; Emojilar: ~${targetStats.emojisPerPost} ta; Qalin: ${Math.round((targetStats.boldShare || 0.8) * 100)}%`
+      );
+    }
+    if (styleGuide?.never_do?.length) {
+      lines.push(`Mualliflar hech qachon qilmaydi: ${styleGuide.never_do.join('; ')}`);
+    }
+    lines.push('');
+  }
+
+  // Recent topics
   if (recentTopics?.length > 0) {
     lines.push(`── OLDIN CHIQQAN MAVZULAR (takrorlamaslik uchun) ──────────`);
     recentTopics.forEach((t, i) => lines.push(`${i + 1}. ${t}`));
     lines.push('');
   }
 
-  // CTA idea for this post
-  lines.push(`── CTA G'OYASI ───────────────────────`);
-  lines.push(cta);
-  lines.push('');
+  // CTA
+  if (cta) {
+    lines.push(`── CTA G'OYASI ──────────────────────────────────────────`);
+    lines.push(cta);
+    lines.push('');
+  }
 
-  // Rewrite context
+  // Previous draft & feedback (for rewrite)
   if (previousDraft) {
-    lines.push(`── OLDINGI DRAFT (shunga o'xshash bo'lmasin) ──────────`);
+    lines.push(`── OLDINGI DRAFT (buni takrorlama) ──────────────────────`);
     lines.push(previousDraft);
     lines.push('');
   }
 
-  // Custom user topic or article URL content
+  if (feedback) {
+    lines.push('── EGASINING TUZATISHI / IZOHI ─────────────────────────');
+    lines.push(feedback);
+    lines.push('');
+  }
+
   if (customTopic) {
-    lines.push('── FOYDALANUVCHINING MAXSUS TOPSHIRIG\'I / MAVZUSI ──');
+    lines.push('── MAXSUS TOPSHIRIQ / MAVZU ───────────────────────────');
     lines.push(customTopic);
     lines.push('');
   }
 
   if (customUrlContent) {
-    lines.push('── MAQOLA / MANBA MATNI (Havola orqali yuklangan) ──');
+    lines.push('── MAQOLA / HAVOLA MATNI ───────────────────────────────');
     if (customUrlContent.title) lines.push(`Sarlavha: ${customUrlContent.title}`);
     lines.push(customUrlContent.content || String(customUrlContent));
     lines.push('');
   }
 
-  if (feedback) {
-    lines.push('── EGASINING IZOHI / TUZATISH ──────────────────────────');
-    lines.push(feedback);
-    lines.push('');
-  }
-
-  lines.push('Endi post yoz.');
+  lines.push('Endi barcha qoidalarga rioya qilgan holda post yoz.');
   return lines.join('\n');
 }
 
 /**
- * Parse the model response in "MAVZU: …\n---\n<html>" format.
- * Returns {topic, text, needsImage, imagePrompt} or throws if format is wrong.
+ * Parse response in "MAVZU: …\n---\n<html>" format.
+ * @param {string} responseText
+ * @returns {{ topic: string, text: string }}
  */
 function parseResponse(responseText) {
   const match = responseText.match(/MAVZU:\s*(.+?)\n-{3,}\n([\s\S]+)/i);
   if (!match) {
-    throw new Error(`[aiService] Unexpected model response format:\n${responseText.slice(0, 200)}`);
+    // Fallback if header is slightly off
+    const lines = responseText.split('\n');
+    const firstLine = lines[0].replace(/^(?:MAVZU:\s*|#+\s*)/i, '').trim();
+    const rest = lines.slice(1).join('\n').replace(/^-{3,}\s*/, '').trim();
+    return {
+      topic: firstLine || 'IT Yangilik',
+      text: toTelegramHtml(rest || responseText),
+    };
   }
   return {
     topic: match[1].trim(),
@@ -198,51 +252,56 @@ function parseResponse(responseText) {
 }
 
 /**
- * Call Gemini/Groq with the given materials and return {topic, text}.
- * If the output is over 4000 chars, asks once more for a shorter version.
+ * Universal model caller supporting Groq (if configured) and Gemini candidate fallback.
  *
  * @param {object} params
- * @param {object} [params.category]       – selected topic category
- * @param {Array}  [params.groupMessages]  – [{chat, messages[]}]
- * @param {Array}  [params.rssItems]       – [{source, title, link, summary}]
- * @param {Array}  [params.styleSamples]   – string[]
- * @param {Array}  [params.recentTopics]   – string[]
- * @param {string} params.cta              – selected CTA idea
- * @param {string} [params.previousDraft]
- * @param {string} [params.feedback]
- * @param {string} [params.customTopic]    – user-specified custom topic
- * @param {object} [params.customUrlContent] – {title, content} from article URL
- * @returns {Promise<{topic: string, text: string}>}
+ * @param {string} params.systemPrompt
+ * @param {string} params.userPrompt
+ * @param {number} [params.temperature=0.85]
+ * @param {boolean} [params.useSearch=true]
+ * @param {string} [params.responseMimeType]
+ * @returns {Promise<string>}
  */
-export async function generatePost({
-  category = { id: 'it', name: 'IT va Texnologiyalar' },
-  groupMessages = [],
-  rssItems = [],
-  styleSamples = [],
-  recentTopics = [],
-  cta,
-  previousDraft,
-  feedback,
-  customTopic,
-  customUrlContent,
+async function callAiModel({
+  systemPrompt,
+  userPrompt,
+  temperature = 0.85,
+  useSearch = false,
+  responseMimeType,
 }) {
-  const model = config.GEMINI_MODEL;
-  const systemPrompt = buildSystemPrompt(category);
-  const userPrompt = buildUserPrompt({
-    category,
-    groupMessages,
-    rssItems,
-    styleSamples,
-    recentTopics,
-    cta,
-    previousDraft,
-    feedback,
-    customTopic,
-    customUrlContent,
-  });
+  // 1. Try Groq if configured (only if Google search is not strictly required)
+  if (config.GROQ_API_KEY && !useSearch && !responseMimeType) {
+    try {
+      const groqModel = config.GROQ_MODEL || 'qwen/qwen3.8-27b';
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${config.GROQ_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: groqModel,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+          temperature,
+        }),
+      });
 
+      if (res.ok) {
+        const data = await res.json();
+        const content = data.choices?.[0]?.message?.content ?? '';
+        if (content) return content;
+      }
+    } catch (err) {
+      console.warn('[aiService] Groq failed, using Gemini:', err.message);
+    }
+  }
+
+  // 2. Gemini candidate models
   const candidateModels = [
-    model,
+    config.GEMINI_MODEL,
     'gemini-3.8-flash',
     'gemini-3.5-flash',
     'gemini-3.1-pro-preview',
@@ -257,108 +316,312 @@ export async function generatePost({
       m !== 'gemini-2.0-flash'
   );
 
-  // ── Groq Provider (Primary when GROQ_API_KEY is configured) ─────────────
-  if (config.GROQ_API_KEY) {
+  let lastError = null;
+
+  for (const m of candidateModels) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const genConfig = {
+          temperature,
+          systemInstruction: systemPrompt,
+        };
+        if (useSearch) {
+          genConfig.tools = [{ googleSearch: {} }];
+        }
+        if (responseMimeType) {
+          genConfig.responseMimeType = responseMimeType;
+        }
+
+        const res = await ai.models.generateContent({
+          model: m,
+          contents: [{ role: 'user', parts: [{ text: userPrompt }] }],
+          config: genConfig,
+        });
+
+        if (res.text) return res.text;
+      } catch (err) {
+        lastError = err;
+        const msg = err.message || '';
+        const isTransient =
+          err.status === 503 ||
+          msg.includes('503') ||
+          msg.includes('high demand') ||
+          msg.includes('UNAVAILABLE') ||
+          err.status === 429;
+
+        if (isTransient && attempt < 2) {
+          const delay = (attempt + 1) * 2000;
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+        break;
+      }
+    }
+  }
+
+  throw lastError ?? new Error('[aiService] Gemini modellari javob bermadi.');
+}
+
+/**
+ * Pass 2: Editor AI call.
+ * Rewrites the draft to eliminate AI tells and fix lint issues without adding new claims or facts.
+ *
+ * @param {object} params
+ * @param {string} params.draftText
+ * @param {string} params.topic
+ * @param {object} params.profile
+ * @param {Array<object>} params.issues
+ * @param {Array<string>} [params.suspiciousPhrases]
+ * @returns {Promise<string>}
+ */
+async function runEditorPass({
+  draftText,
+  topic,
+  profile = {},
+  issues = [],
+  suspiciousPhrases = [],
+}) {
+  const guide = profile?.guide || {};
+  const targetStats = profile?.targetStats || {};
+
+  const systemPrompt = `Sen mohir, sinchkov Telegram muharririsan.
+Vazifang — quyida keltirilgan post qoralamasini tahrirlab, undagi barcha sun'iy intellekt (AI) belgilarini, shablon qoliplarni va lint xatolarini TO'LIQ yo'qotish.
+
+QAT'IY QOIDALAR:
+1. Yangi faktlar, havolalar yoki shaxsiy da'volar QO'SHMA. Bor ma'lumotni saqlagan holda ifodani jonlantir.
+2. Gap uzunligini xilma-xil qil: qisqa gaplar (2-5 so'z) bilan uzunroqlarini aralashtir.
+3. Uzun tire (—, –) QAT'IYAN TAQIQLANADI. O'rniga oddiy defis (-) yoki boshqa tinish belgisi ishlat.
+4. "Xulosa qilib aytganda", "Bugungi raqamli dunyoda", "Zamonaviy dunyoda", "Shuni ta'kidlash joizki", "muhim ahamiyatga ega", "nafaqat ... balki ...", "Keling, ...", "Ushbu", uchtalik ro'yxat ("A, B va C") qoliplarini butunlay olib tashla.
+5. Har bir qatorni emoji bilan boshlash taqiqlanadi. Faqat 2-4 ta emoji qoldir.
+6. Sarlavhada "Sarlavha: izoh" qolipi bo'lmasin.
+7. Faqat Telegram HTML teglari (<b>, <i>, <code>, <a>) bo'lsin.
+8. Uzunlik: 150–250 so'z.
+
+Format: Faqat tahrirlangan post matnini HTML ko'rinishida chiqar (hech qanday izohsiz).`;
+
+  const issueLines = issues.map((i) => `• [${i.type}] ${i.message}`).join('\n');
+  let suspiciousBlock = '';
+  if (suspiciousPhrases.length > 0) {
+    suspiciousBlock = `\nQuyidagi iboralar sun'iy (AI-yozgan) deb topildi, ularni tabiiy tilda qayta yoz:\n${suspiciousPhrases.map((p) => `• "${p}"`).join('\n')}`;
+  }
+
+  const userPrompt = `Quyidagi postni tahrirla:
+
+MAVZU: ${topic}
+
+HOZIRGI DRAFT:
+${draftText}
+
+ANIQLANGAN MUAMMOLAR (LINT ISSUES):
+${issueLines || 'AI shablonlarini tozalash va ritmni yaxshilash kerak.'}
+${suspiciousBlock}
+
+USLUB KO'RSATKICHLARI:
+• O'rtacha gap: ~${targetStats.avgSentenceLength || 9} so'z
+• Emojilar: ~${targetStats.emojisPerPost || 3} ta
+
+Endi postni tahrirlangan variantini Telegram HTML formatida qaytar.`;
+
+  const edited = await callAiModel({
+    systemPrompt,
+    userPrompt,
+    temperature: 0.6,
+    useSearch: false,
+  });
+
+  return toTelegramHtml(edited.trim());
+}
+
+/**
+ * Optional Judge (HUMANIZE_LEVEL=high):
+ * Asks Gemini whether text reads like AI-written and extracts suspicious phrases.
+ *
+ * @param {string} text
+ * @returns {Promise<{ score: number, suspiciousPhrases: string[] }>}
+ */
+async function runHumanJudge(text) {
+  const systemPrompt = `Sen matn uslubi tahlilchisisan. Berilgan o'zbek tilidagi postni o'rganib, uning sun'iy intellekt (AI) tomonidan yozilganlik ehtimolini xolis bahola.
+0 - mutlaqo insoniy, tabiiy, jonli til.
+10 - yaqqol AI shabloni (qolip iboralar, bir xil gap uzunligi, sun'iy xulosa).
+
+Faqat quyidagi JSON formatida javob ber:
+{
+  "score": 0,
+  "suspicious_phrases": ["..."]
+}`;
+
+  const userPrompt = `Quyidagi matnni bahola:\n\n${stripTags(text)}`;
+
+  try {
+    const raw = await callAiModel({
+      systemPrompt,
+      userPrompt,
+      temperature: 0.2,
+      useSearch: false,
+      responseMimeType: 'application/json',
+    });
+
+    const parsed = JSON.parse(raw.trim());
+    return {
+      score: Number(parsed.score ?? 0),
+      suspiciousPhrases: Array.isArray(parsed.suspicious_phrases) ? parsed.suspicious_phrases : [],
+    };
+  } catch (err) {
+    console.warn('[aiService] Human judge pass skipped due to parse error:', err.message);
+    return { score: 0, suspiciousPhrases: [] };
+  }
+}
+
+/**
+ * Orchestrated generation pipeline: Pass 1 (Draft) → Pass 2 (Edit) → Lint Loop → Judge.
+ *
+ * @param {object} params
+ * @returns {Promise<{ topic: string, text: string }>}
+ */
+export async function generatePost(params = {}) {
+  const {
+    category = { id: 'it', name: 'IT va Texnologiyalar' },
+    groupMessages = [],
+    rssItems = [],
+    styleSamples = [],
+    recentTopics = [],
+    recentPostTexts = [],
+    cta = '',
+    previousDraft = null,
+    feedback = null,
+    customTopic = null,
+    customUrlContent = null,
+    ownerNote = null,
+  } = params;
+
+  // 1. Get style profile for the specific category
+  const profile = await getStyleProfile({ category: category.id }).catch(() => ({}));
+  const targetStats = profile?.targetStats || {};
+  const styleGuide = profile?.guide || {};
+
+  // 2. Build system and user prompts for Pass 1 (Draft)
+  const systemPrompt = buildSystemPrompt(category, profile);
+  const userPrompt = buildUserPrompt({
+    category,
+    groupMessages,
+    rssItems,
+    styleSamples,
+    recentTopics,
+    cta,
+    previousDraft,
+    feedback,
+    customTopic,
+    customUrlContent,
+    ownerNote,
+    ownerBio: config.OWNER_BIO,
+    targetStats,
+    styleGuide,
+  });
+
+  console.log(`[aiService] Generating draft for category "${category.id}"…`);
+  const rawDraft = await callAiModel({
+    systemPrompt,
+    userPrompt,
+    temperature: 0.85,
+    useSearch: !customTopic && !customUrlContent,
+  });
+
+  let { topic, text: currentText } = parseResponse(rawDraft);
+
+  // Sources for 7-gram COPY CHECK
+  const copySources = {
+    styleSamples,
+    groupMessages,
+    rssItems,
+    recentPosts: recentPostTexts,
+  };
+
+  // 3. Initial Lint
+  let currentLint = lintPost(currentText, profile, copySources);
+  console.log(
+    `[humanLint] Initial draft score: ${currentLint.score}/100. Issues: [${currentLint.issues.map((i) => i.type).join(', ')}]`
+  );
+
+  let bestText = currentText;
+  let bestScore = currentLint.score;
+
+  // 4. Editor Retry Loop (if score < LINT_MIN_SCORE)
+  const minScore = config.LINT_MIN_SCORE || 80;
+  let retries = 0;
+
+  while (bestScore < minScore && retries < 2) {
+    retries++;
+    console.log(`[humanLint] Score (${bestScore}) < threshold (${minScore}). Running editor pass (retry #${retries})…`);
+
     try {
-      const groqModel = config.GROQ_MODEL || 'qwen/qwen3.8-27b';
-      console.log(`[aiService] Generating post with Groq (${groqModel}) for category "${category.id}"…`);
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${config.GROQ_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: groqModel,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
-          ],
-          temperature: 0.8,
-        }),
+      const edited = await runEditorPass({
+        draftText: bestText,
+        topic,
+        profile,
+        issues: currentLint.issues,
       });
 
-      if (res.ok) {
-        const data = await res.json();
-        const text = data.choices?.[0]?.message?.content ?? '';
-        if (text) {
-          const result = parseResponse(text);
-          console.log(`[aiService] Successfully generated via Groq: "${result.topic}"`);
-          return result;
-        }
-      } else {
-        const errBody = await res.text();
-        console.warn(`[aiService] Groq HTTP ${res.status}: ${errBody.slice(0, 150)}`);
+      const editedLint = lintPost(edited, profile, copySources);
+      console.log(
+        `[humanLint] Retry #${retries} score: ${editedLint.score}/100. Issues: [${editedLint.issues.map((i) => i.type).join(', ')}]`
+      );
+
+      if (editedLint.score > bestScore) {
+        bestScore = editedLint.score;
+        bestText = edited;
+        currentLint = editedLint;
+      }
+
+      if (bestScore >= minScore) {
+        break;
       }
     } catch (err) {
-      console.warn('[aiService] Groq error, falling back to Gemini:', err.message);
+      console.warn(`[aiService] Editor pass #${retries} failed:`, err.message);
+      break;
     }
   }
 
-  async function callModel(contents) {
-    let lastError = null;
-    for (const m of candidateModels) {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          const res = await ai.models.generateContent({
-            model: m,
-            contents,
-            config: {
-              temperature: 0.9,
-              systemInstruction: systemPrompt,
-              tools: [{ googleSearch: {} }],
-            },
-          });
-          if (res.text) return res;
-        } catch (err) {
-          lastError = err;
-          const msg = err.message || '';
-          const isTransient =
-            err.status === 503 ||
-            msg.includes('503') ||
-            msg.includes('high demand') ||
-            msg.includes('UNAVAILABLE') ||
-            err.status === 429;
+  // 5. Optional Judge Pass (HUMANIZE_LEVEL=high)
+  if (config.HUMANIZE_LEVEL === 'high') {
+    try {
+      const judge = await runHumanJudge(bestText);
+      console.log(
+        `[humanJudge] AI-feel score: ${judge.score}/10. Suspicious phrases: ${judge.suspiciousPhrases.length}`
+      );
 
-          if (isTransient && attempt < 2) {
-            const delay = (attempt + 1) * 2000;
-            console.warn(`[aiService] Model "${m}" vaqtincha band, ${delay}ms kutilmoqda (urinish ${attempt + 1}/3)…`);
-            await new Promise((r) => setTimeout(r, delay));
-            continue;
-          }
+      if (judge.score > 4) {
+        console.log('[humanJudge] Score > 4, running final targeted editor pass…');
+        const refined = await runEditorPass({
+          draftText: bestText,
+          topic,
+          profile,
+          issues: currentLint.issues,
+          suspiciousPhrases: judge.suspiciousPhrases,
+        });
 
-          console.warn(`[aiService] Model "${m}" javob bermadi: ${msg.slice(0, 100)}. Keyingi modelga o'tilmoqda…`);
-          break;
+        const refinedLint = lintPost(refined, profile, copySources);
+        console.log(
+          `[humanLint] Post-judge score: ${refinedLint.score}/100. Issues: [${refinedLint.issues.map((i) => i.type).join(', ')}]`
+        );
+
+        if (refinedLint.score >= bestScore - 10) {
+          bestText = refined;
+          bestScore = refinedLint.score;
         }
       }
+    } catch (judgeErr) {
+      console.warn('[aiService] Optional judge pass error:', judgeErr.message);
     }
-    throw lastError ?? new Error('[aiService] Barcha Gemini modellari javob bera olmadi');
   }
 
-  console.log(`[aiService] Generating post with Gemini model "${model}" for category "${category.id}"…`);
-
-  const response = await callModel([{ role: 'user', parts: [{ text: userPrompt }] }]);
-
-  let responseText = response.text ?? '';
-  let result = parseResponse(responseText);
-
-  // If the generated HTML is too long, ask for a shorter version once
-  if (result.text.length > 4000) {
-    console.log(`[aiService] Post too long (${result.text.length} chars), requesting shorter version…`);
-
-    const shorterResponse = await callModel([
-      { role: 'user', parts: [{ text: userPrompt }] },
-      { role: 'model', parts: [{ text: responseText }] },
-      {
-        role: 'user',
-        parts: [{ text: "Postni qisqaroq qil — 150–250 so'z bo'lsin. Formatni saqlagan holda qayta yoz." }],
-      },
-    ]);
-
-    responseText = shorterResponse.text ?? '';
-    result = parseResponse(responseText);
+  // 6. Ensure character limit (Telegram 4000 char limit)
+  if (bestText.length > 4000) {
+    bestText = bestText.slice(0, 3950) + '…';
   }
 
-  console.log(`[aiService] Generated topic: "${result.topic}" (${result.text.length} chars) [category: ${category.id}]`);
-  return result;
+  console.log(`[aiService] Final post ready: "${topic}" (${bestText.length} chars, lint score: ${bestScore}/100)`);
+  return {
+    topic,
+    text: bestText,
+  };
 }

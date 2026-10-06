@@ -337,6 +337,91 @@ Foydali qo'llanma, checklist yoki cheat sheet orqali yangi obunachilarni jalb qi
 
 ---
 
+## 🎭 Insoniy uslub va AI belgilarini yo'qotish (Humanizer & Style Engine)
+
+Sun'iy intellekt tomonidan yozilgan matnlarda odatda qoliplashgan shablonlar ("Xulosa qilib aytganda", "Bugungi raqamli dunyoda", uzun em-tire `—`, bir xil gap uzunligi, har qatorni emoji bilan boshlash) uchraydi. Ushbu tizim postlarni haqiqiy tirik inson yozgandek jaranglashi uchun 4 qatlamli himoyadan foydalanadi:
+
+### 1. Tizim qatlamlari (Layers)
+
+1. **Brend uslubi (Brand Style):**
+   - Telegram Desktop JSON eksportlari (`data/exports/`).
+   - `STYLE_CHANNELS` orqali ko'rsatilgan eng yaxshi ommaviy kanallarning oxirgi 200 ta postidan eng ko'p ko'rilgan (top 30%) postlar haftada 1 marta o'qilib, keshlanadi (`data/style/<channel>.json`).
+2. **Muallifning o'z ovozi (Own Voice - eng yuqori vazn):**
+   - Kanal egasining o'z qo'li bilan yozgan matnlari `data/voice/*.txt` fayllaridan olinadi.
+   - Agar `VOICE_FROM_GROUPS=true` bo'lsa, egasining `SOURCE_CHATS` dagi ommaviy guruhlarda yozgan xabarlari ham tahlilga qo'shiladi (shaxsiy chatlar HECH QACHON o'qilmaydi).
+   - Ovoz tahlili `data/style/voice.json` da keshlanadi.
+3. **Egasining haqiqiy fikrlari (`/fikr` va `OWNER_BIO`):**
+   - Qat'iy qoida: AI hech qachon shaxsiy tajriba, test yoki anekdot to'qimaydi!
+   - Egasining `/fikr <matn>` orqali qoldirgan haqiqiy fikri yoki `.env` dagi `OWNER_BIO` faktlari keyingi postga birinchi shaxs nomidan tabiiy singdiriladi.
+4. **Muharrir va Lint (Editor Pass + Human Lint):**
+   - **Pass 1 (Draft):** Uslub qo'llanmasi, ritm ko'rsatkichlari va namunalar asosida qoralama yoziladi.
+   - **Lint tekshiruvi:** `src/humanLint.js` sof dasturiy kod orqali matnni 11 ta mezon bo'yicha baholaydi (0-100 ball). Banned phrases, uzun tire, gaplar va abzatslar ritmi, emoji me'yori tekshiriladi.
+   - **7-so'zlik Plagiat filtri (Copy check):** Matnda manbalar yoki namunalardan ketma-ket 7 ta so'z to'g'ridan-to'g'ri ko'chirilgan bo'lsa, lint avtomatik qulab tushadi (0 ball).
+   - **Pass 2 (Editor loop):** Agar ball `LINT_MIN_SCORE` (80) dan past bo'lsa, ikkinchi AI chaqiruvi (muharrir) yangi fakt to'qimasdan matnni qayta tahrirlaydi (2 tagacha urinish).
+   - **Hakam (Judge pass):** `HUMANIZE_LEVEL=high` bo'lsa, AI dan matndagi sun'iy jumlalar so'raladi va yana bir bor tozalash o'tkaziladi.
+
+---
+
+### 2. 3–5 ta brand kanalni qanday tanlash kerak? (Kategoriyalar bo'yicha)
+
+- O'zingiz yoqtirgan, tili ravon, o'quvchilar bilan jonli muloqot qiladigan ommaviy kanallar username'larini tanlang.
+- Umumiy zaxira (fallback) kanallarni `STYLE_CHANNELS` da ko'rsatishingiz mumkin:
+  ```ini
+  STYLE_CHANNELS=abdusattor,paiziev24,ramzcoder,ustozation,shahadolimov,azim_pulat
+  ```
+- **Kategoriyalar bo'yicha alohida uslub kanallari (ixtiyoriy):**
+  Har bir yo'nalishga mos xarakterdagi kanallarni biriktirish mumkin:
+  ```ini
+  STYLE_CHANNELS_IT=ramzcoder,azim_pulat
+  STYLE_CHANNELS_KARYERA=azim_pulat,paiziev24
+  STYLE_CHANNELS_OQISH=ustozation,abdusattor
+  STYLE_CHANNELS_FAN=shahadolimov
+  STYLE_CHANNELS_IMKONIYATLAR=
+  ```
+- **Qanday ishlaydi:** Generator post yaratishda birinchi navbatda shu kategoriyaga biriktirilgan kanallardan namuna oladi. Agar foydali namunalar 3 tadan kam bo'lsa, umumiy `STYLE_CHANNELS` va eksportlardan to'ldiriladi. Har bir kanal qaysi kategoriya ishlatishidan qat'i nazar bir marta keshlanadi (`data/style/<channel>.json`).
+- Har bir kategoriya uchun alohida uslub qo'llanmasi yaratiladi: `data/style/guide.<kategoriya>.json`.
+- **Qat'iy qoida:** Hech qachon boshqa kanallarning jumlalarini ko'chirmang! Tizim faqat ularning gap ritmi, ochilish va yopilish uslubi, formatlash me'yorlarini o'rganadi.
+
+---
+
+### 3. O'z matnlaringizni qanday qo'shish mumkin?
+
+1. `data/voice/` papkasiga `.txt` fayl oching (masalan, `fikrlarim.txt`).
+2. Har bir matnni alohida qatorda faqat uchta tire `---` bilan ajrating:
+   ```text
+   Dasturlashda eng muhim narsa sintaksis emas, balki muammoni to'g'ri tushunish. Qolganini hujjatlardan topish oson.
+   ---
+   Yaqinda loyihamda yangi texnologiyani sinab ko'rdim. Boshida ancha chalkash ko'rindi, lekin amalda tezlikni 2 barobar oshirdi.
+   ```
+3. Tizim bu matnlarni eng yuqori ustuvorlik bilan o'rganadi.
+
+---
+
+### 4. Telegram buyruqlari
+
+- `/fikr <fikringiz>` — Egasining shaxsiy fikri yoki tajribasini saqlash (maksimal 5 ta navbatda). Generator keyingi yangi postda ushbu fikrni birinchi shaxs nomidan tabiiy singdiradi.
+- `/uslub` — Barcha kategoriyalarga qaysi kanallar bog'langanligi, namunalar soni va faol uslub profilini ko'rish.
+- `/uslub <kategoriya>` — Muayyan kategoriya (masalan: `/uslub karyera` yoki `/uslub it`) bo'yicha batafsil statistika va uslubiy qo'llanma.
+- `/uslub_yangila` — Barcha kategoriyalar va umumiy uslub qo'llanmalarini qayta tahlil qilib yangilash.
+- `/uslub_yangila <kategoriya>` — Faqat bitta kategoriya (masalan: `/uslub_yangila it`) manbalari va qo'llanmasini yangilash.
+
+---
+
+### 5. Oltin qoidalar (Prompt & Yozish talablari)
+
+> [!IMPORTANT]
+> **Shaxsiy tajriba to'qimaslik qoidasi:**
+> Uslub namunalari birinchi shaxs nomidan ("men") yozilgan bo'lsa ham, AI hech qachon o'zidan shaxsiy tajriba, test, raqam yoki hikoya to'qimaydi. Birinchi shaxs nomidan yozish FAQAT egasining `/fikr` orqali qoldirgan haqiqiy izohlari yoki `OWNER_BIO` faktlari asosidagina ruxsat etiladi; aks holda xolis, neytral va informativ tilda aniq misollar bilan yoziladi.
+>
+> **Kitob va manbalar qoidasi:**
+> Kitob sharhi yoki maqola/manbaga asoslangan postlarda, agar materialda kitob/maqola nomi va muallifi berilgan bo'lsa, ularni postda albatta aniq ko'rsatish shart. Berilmagan yoki mavjud bo'lmagan manbani esa aslo da'vo qilmaslik kerak.
+
+> [!TIP]
+> **Har doim qoralamani o'qib chiqing va 1–2 ta gapni o'z qo'lingiz bilan o'zgartiring!**
+> Qanchalik mukammal AI tizimi bo'lmasin, muallifning 30 soniyalik qo'lda kiritgan kichik tahriri postni 100% samimiy va tirik inson so'ziga aylantiradi.
+
+---
+
 ## `.env` sozlamalari
 
 | Kalit | Tavsif | Standart |

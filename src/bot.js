@@ -13,6 +13,8 @@ import {
   getPendingDrafts,
   getKv,
   getCategoryStats,
+  addOwnerNote,
+  getPendingOwnerNotes,
 } from './db.js';
 import { getActiveCategories, getAllCategories, getCategoryById } from './topics.js';
 import { stripTags } from './format.js';
@@ -25,6 +27,11 @@ import {
   handleOwnerMagnitlar,
 } from './magnet.js';
 import { generateGrowthPack } from './growthPack.js';
+import {
+  getStyleProfile,
+  rebuildStyleProfile,
+  formatProfileSummary,
+} from './styleProfile.js';
 
 export const bot = new Bot(config.BOT_TOKEN);
 
@@ -524,6 +531,9 @@ async function handleStart(ctx) {
       `• 🚀 <b>/generate [kategoriya]</b> — Ommaviy yangiliklardan yangi post qoralash (ixtiyoriy kategoriya bilan)\n` +
       `• 📊 <b>/topics</b> — Mavzular kategoriyalari, vaznlari va e'lon qilingan postlar statistikasi\n` +
       `• ✍️ <b>/write [mavzu/link]</b> — Maxsus mavzu yoki havola (URL) bo'yicha post yozish\n` +
+      `• 💡 <b>/fikr [matn]</b> — Egasining haqiqiy fikri/tajribasini saqlash (AI postga singdiradi)\n` +
+      `• 🎨 <b>/uslub</b> — Kanalning insoniy uslub profili va ko'rsatkichlari\n` +
+      `• 🔄 <b>/uslub_yangila</b> — Uslub tahlili va qo'llanmasini qayta yaratish\n` +
       `• 📊 <b>/status</b> — Kanal statistikasi va kutayotgan qoralamalar\n\n` +
       `<b>📋 Shaxsiy Dayjest Agent:</b>\n` +
       `• 📋 <b>/digest</b> — Telegramingiz (kanallar, guruhlar, shaxsiy yozishmalar) bo'yicha shaxsiy maxfiy hisobot tayyorlash\n` +
@@ -768,12 +778,97 @@ async function handleOwnerStart(ctx) {
   await handleStart(ctx);
 }
 
+async function handleFikr(ctx) {
+  const text = ctx.message?.text?.trim() || '';
+  const note = text.replace(/^\/fikr(@\w+)?\s*/i, '').trim();
+
+  if (!note) {
+    const pending = getPendingOwnerNotes();
+    let msg = `💡 <b>Egasining Fikrlari & Shaxsiy Tajribasi:</b>\n\n`;
+    if (pending.length === 0) {
+      msg += `Hozircha kutilayotgan fikrlar yo'q.\n\n`;
+    } else {
+      msg += `<b>Kutilayotgan fikrlar (${pending.length}/5):</b>\n`;
+      pending.forEach((p, i) => {
+        msg += `${i + 1}. <i>"${p.text.slice(0, 100)}"</i>\n`;
+      });
+      msg += `\n`;
+    }
+    if (config.OWNER_BIO) {
+      msg += `👤 <b>Owner Bio:</b> <i>${config.OWNER_BIO}</i>\n\n`;
+    }
+    msg +=
+      `Yangi fikr qo'shish uchun:\n<code>/fikr &lt;o'z fikringiz yoki tajribangiz&gt;</code>\n\n` +
+      `<i>Qoida: Generator keyingi postda ushbu fikrni birinchi shaxs nomidan tabiiy singdiradi. AI shaxsiy tajriba to'qimaydi.</i>`;
+    await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: mainKeyboard });
+    return;
+  }
+
+  const res = addOwnerNote(note);
+  if (!res.ok) {
+    await ctx.reply(`⚠️ ${res.error}`, { reply_markup: mainKeyboard });
+    return;
+  }
+
+  await ctx.reply(
+    `✅ <b>Fikringiz saqlandi!</b> (${res.count}/5 kutilmoqda)\n\nKeyingi yangi postda birinchi shaxs nomidan tabiiy singdiriladi.`,
+    { parse_mode: 'HTML', reply_markup: mainKeyboard }
+  );
+}
+
+async function handleUslub(ctx) {
+  const text = ctx.message?.text?.trim() || '';
+  const arg = text.replace(/^\/uslub(@\w+)?\s*/i, '').trim().toLowerCase();
+  const category = arg || null;
+
+  await ctx.reply(
+    `⏳ <b>Uslub profili yuklanmoqda${category ? ` (${category})` : ''}…</b>`,
+    { parse_mode: 'HTML' }
+  );
+
+  try {
+    const profile = await getStyleProfile({ category: category || 'it' });
+    const summary = formatProfileSummary(profile, category);
+    await ctx.reply(summary, { parse_mode: 'HTML', reply_markup: mainKeyboard });
+  } catch (err) {
+    console.error('[bot] handleUslub error:', err);
+    await ctx.reply(`❌ Uslub profilini yuklashda xatolik: ${err.message}`);
+  }
+}
+
+async function handleUslubYangila(ctx) {
+  const text = ctx.message?.text?.trim() || '';
+  const arg = text.replace(/^\/uslub_yangila(@\w+)?\s*/i, '').trim().toLowerCase();
+  const category = arg || null;
+
+  const targetLabel = category ? `<b>"${category}"</b> yo'nalishi` : `<b>Barcha kategoriyalar</b>`;
+  await ctx.reply(
+    `🔄 <b>${targetLabel} bo'yicha uslub manbalari va qo'llanma yangilanmoqda…</b>\n\nLive kanallar, ovoz fayllari va Gemini tahlili qayta yuklanmoqda. Bu biroz vaqt olishi mumkin.`,
+    { parse_mode: 'HTML' }
+  );
+
+  try {
+    const profile = await rebuildStyleProfile(category);
+    const summary = formatProfileSummary(profile, category);
+    await ctx.reply(
+      `✅ <b>Uslub profili muvaffaqiyatli yangilandi${category ? ` [${category}]` : ''}!</b>\n\n${summary}`,
+      { parse_mode: 'HTML', reply_markup: mainKeyboard }
+    );
+  } catch (err) {
+    console.error('[bot] handleUslubYangila error:', err);
+    await ctx.reply(`❌ Uslub profilini yangilashda xatolik: ${err.message}`);
+  }
+}
+
 // Register commands
 bot.command('start', handleOwnerStart);
 bot.command('write', handleWrite);
 bot.command('generate', handleGenerate);
 bot.command('topics', handleTopics);
 bot.command('status', handleStatus);
+bot.command('fikr', handleFikr);
+bot.command('uslub', handleUslub);
+bot.command('uslub_yangila', handleUslubYangila);
 bot.command('digest', handleDigest);
 bot.command('digest_status', handleDigestStatus);
 bot.command('help', handleStart);

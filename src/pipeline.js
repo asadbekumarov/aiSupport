@@ -2,7 +2,7 @@
 import { config } from './config.js';
 import { fetchRecentMessages } from './userbot.js';
 import { fetchRssItems } from './rss.js';
-import { pickStyleSamples } from './styleExamples.js';
+import { getSamples } from './styleSources.js';
 import { generatePost, pickCta } from './aiService.js';
 import { pickCategory, getCategoryById, getCategoryFeeds } from './topics.js';
 import {
@@ -11,6 +11,8 @@ import {
   updateDraftText,
   updateDraftContext,
   getRecentTopics,
+  getRecentPostTexts,
+  consumePendingOwnerNote,
   getStats,
   getLatestMagnet,
 } from './db.js';
@@ -200,10 +202,22 @@ export async function runPipeline(reason, opts = {}) {
       }
     }
 
-    // ── 4. Pick style samples, topics to avoid, CTA ──────────────────────
-    const styleSamples = pickStyleSamples(3, category.id);
+    // ── 4. Pick style samples, topics to avoid, CTA, owner note ────────
+    const styleSamples = await getSamples({ category: category.id });
     const recentTopics = getRecentTopics(15);
+    const recentPostTexts = getRecentPostTexts(50);
     const cta = pickCta();
+
+    // Owner note: reuse from draft context if rewriting, else consume ONE pending note
+    let ownerNote = null;
+    if (existingDraftId != null && storedContext?.ownerNote) {
+      ownerNote = storedContext.ownerNote;
+    } else if (existingDraftId == null) {
+      ownerNote = consumePendingOwnerNote();
+      if (ownerNote) {
+        console.log(`[pipeline] Weaving owner note into draft #${existingDraftId ?? 'new'}: "${ownerNote.slice(0, 50)}…"`);
+      }
+    }
 
     // ── 5. Prepare context for AI ─────────────────────────────────────────
     const contextForAI = {
@@ -212,11 +226,13 @@ export async function runPipeline(reason, opts = {}) {
       rssItems,
       styleSamples,
       recentTopics,
+      recentPostTexts,
       cta,
       previousDraft,
       feedback,
       customTopic: storedContext?.customTopic ?? customTopic,
       customUrlContent: storedContext?.customUrlContent ?? customUrlContent,
+      ownerNote,
     };
 
     // ── 6. Generate post via AI ───────────────────────────────────────────
@@ -242,6 +258,7 @@ export async function runPipeline(reason, opts = {}) {
           rssItems: contextForAI.rssItems,
           customTopic: contextForAI.customTopic,
           customUrlContent: contextForAI.customUrlContent,
+          ownerNote,
         });
         // Edit the same message in place
         await editDraftMessage(existingDraftId);
@@ -262,6 +279,7 @@ export async function runPipeline(reason, opts = {}) {
           rssItems: contextForAI.rssItems,
           customTopic: contextForAI.customTopic,
           customUrlContent: contextForAI.customUrlContent,
+          ownerNote,
         },
       });
       console.log(`[pipeline] Draft #${draftId} created: "${topic}" [category: ${category.id}]`);
